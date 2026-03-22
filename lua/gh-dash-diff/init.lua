@@ -87,20 +87,30 @@ function M.open_pr(pr_number)
         if err3 then vim.notify("gh-dash-diff: " .. err3, vim.log.levels.ERROR); return end
         State.pr.files = files
 
-        -- Open the review layout: Snacks sidebar + diff windows
-        require("gh-dash-diff.ui").open(pr, files)
+        -- Fetch PR ref so head/base commits are available locally for `git show`.
+        -- Without this, git show {sha}:{path} silently fails when commits aren't
+        -- in the local repo, producing empty diff panes.
+        files_mod.fetch_ref("origin", "refs/pull/" .. pr_number .. "/head", root, function(fetch_err)
+          if fetch_err then
+            -- Non-fatal: commits may already be present (e.g. branch checked out locally)
+            vim.notify("gh-dash-diff: git fetch warning: " .. fetch_err, vim.log.levels.WARN)
+          end
 
-        -- Fetch comments in background
-        reviews_mod.fetch_threads(owner, name, pr_number, function(_, threads)
-          State.review.threads = threads or {}
-          local ok, comments_mod = pcall(require, "gh-dash-diff.ui.comments")
-          if ok then comments_mod.render_all(threads or {}) end
-        end)
+          -- Open the review layout: Snacks sidebar + diff windows
+          require("gh-dash-diff.ui").open(pr, files)
 
-        -- Fetch commits in background (enables commit review mode)
-        local commits_mod = require("gh-dash-diff.gh.commits")
-        commits_mod.list(owner, name, pr_number, function(_, commits)
-          State.pr.commits = commits or {}
+          -- Fetch comments in background
+          reviews_mod.fetch_threads(owner, name, pr_number, function(_, threads)
+            State.review.threads = threads or {}
+            local ok, comments_mod = pcall(require, "gh-dash-diff.ui.comments")
+            if ok then comments_mod.render_all(threads or {}) end
+          end)
+
+          -- Fetch commits in background (enables commit review mode)
+          local commits_mod = require("gh-dash-diff.gh.commits")
+          commits_mod.list(owner, name, pr_number, function(_, commits)
+            State.pr.commits = commits or {}
+          end)
         end)
       end)
     end)
