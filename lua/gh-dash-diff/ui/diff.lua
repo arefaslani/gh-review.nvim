@@ -136,6 +136,10 @@ end
 --- Reads actual key values from config so user overrides are reflected.
 --- @param state GhDashDiffState
 function M.show_help(state)
+  -- Save diff window + cursor so help close returns to the exact position
+  local diff_win  = vim.api.nvim_get_current_win()
+  local saved_pos = vim.api.nvim_win_get_cursor(diff_win)
+
   local cfg = require("gh-dash-diff").config.keymaps
 
   -- Helper to display a key, replacing false/nil with "(disabled)"
@@ -199,6 +203,12 @@ function M.show_help(state)
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
+    vim.schedule(function()
+      if vim.api.nvim_win_is_valid(diff_win) then
+        vim.api.nvim_set_current_win(diff_win)
+        pcall(vim.api.nvim_win_set_cursor, diff_win, saved_pos)
+      end
+    end)
   end
 
   local o = { buffer = buf, silent = true, nowait = true }
