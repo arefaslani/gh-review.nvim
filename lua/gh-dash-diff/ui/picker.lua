@@ -31,22 +31,45 @@ end
 --- Build picker items from a PR file list.
 --- @param files GhFile[]
 --- @return table[] items Snacks picker items
-local function build_items(files)
+local function build_file_items(files)
   local items = {}
   for i, f in ipairs(files) do
     local icon  = STATUS_ICONS[f.status] or "?"
     local stats = string.format("+%d -%d", f.additions or 0, f.deletions or 0)
     table.insert(items, {
-      idx        = i,
-      text       = f.filename,      -- used for fuzzy filtering
-      file       = f.filename,
-      display    = short_path(f.filename),
-      status     = f.status or "modified",
-      icon       = icon,
-      stats      = stats,
-      additions  = f.additions or 0,
-      deletions  = f.deletions or 0,
+      idx         = i,
+      type        = "file",
+      text        = f.filename,      -- used for fuzzy filtering
+      file        = f.filename,
+      filename    = f.filename,
+      display     = short_path(f.filename),
+      status      = f.status or "modified",
+      icon        = icon,
+      stats       = stats,
+      additions   = f.additions or 0,
+      deletions   = f.deletions or 0,
       _file_entry = f,              -- raw GhFile for downstream use
+    })
+  end
+  return items
+end
+
+--- Build picker items from a commit list.
+--- @param commits GhCommit[]
+--- @return table[] items Snacks picker items
+local function build_commit_items(commits)
+  local items = {}
+  for i, c in ipairs(commits) do
+    local short_sha = c.sha:sub(1, 7)
+    local first_line = c.message:match("^[^\n]*") or c.message
+    table.insert(items, {
+      idx           = i,
+      type          = "commit",
+      text          = short_sha .. " " .. first_line,  -- fuzzy filter text
+      sha           = c.sha,
+      short_sha     = short_sha,
+      display       = first_line,
+      _commit_entry = c,
     })
   end
   return items
@@ -66,12 +89,35 @@ end
 --- @param item table Snacks picker item
 local function load_item_diff(state, item)
   if not item then return end
-  state.pr.current_idx = item.idx
-  M.refresh(state)
-  require("gh-dash-diff.ui.diff").load_file(state, item._file_entry, item.idx)
+
+  if item.type == "commit" then
+    -- Commit mode: fetch files for this commit then show first file
+    state.pr.current_commit_idx = item.idx
+    M.refresh(state)
+    local commits_mod = require("gh-dash-diff.gh.commits")
+    commits_mod.get_files(state.repo.owner, state.repo.name, item.sha, function(err, files)
+      if err then
+        vim.notify("gh-dash-diff: " .. err, vim.log.levels.ERROR)
+        return
+      end
+      state.pr.commit_files = files or {}
+      if #files > 0 then
+        state.pr.current_idx = 1
+        require("gh-dash-diff.ui.diff").load_file(
+          state, files[1], 1,
+          { base_ref = item.sha .. "~1", head_ref = item.sha }
+        )
+      end
+    end)
+  else
+    -- Files mode: existing behavior
+    state.pr.current_idx = item.idx
+    M.refresh(state)
+    require("gh-dash-diff.ui.diff").load_file(state, item._file_entry, item.idx)
+  end
 end
 
---- Open the Snacks picker sidebar showing PR changed files.
+--- Open the Snacks picker sidebar showing PR changed files or commits.
 --- Keeps itself open after selection (acts as a persistent sidebar).
 --- @param state GhDashDiffState
 --- @param config GhDashDiffConfig
@@ -82,7 +128,14 @@ function M.open(state, config)
     return
   end
 
-  local items = build_items(state.pr.files)
+  local is_commit_mode = state.pr.review_mode == "commits"
+  local items = is_commit_mode
+    and build_commit_items(state.pr.commits)
+    or  build_file_items(state.pr.files)
+
+  local title = is_commit_mode
+    and string.format("PR #%d — Commits", state.pr.number)
+    or  string.format("PR #%d", state.pr.number)
 
   -- Direct function confirm: avoids the confirm→string→action resolution chain
   -- which can fall through to "jump" via the circular-reference guard in
@@ -99,7 +152,7 @@ function M.open(state, config)
 
   state.layout.picker = Snacks.picker.pick({
     source     = "gh_pr_files",
-    title      = string.format("PR #%d", state.pr.number),
+    title      = title,
     items      = items,
     auto_close = false,
 
@@ -117,23 +170,34 @@ function M.open(state, config)
       width   = config.picker.width or 35,
     },
 
-    -- Custom line format: active indicator + icon + short filename + diff stats
+    -- Custom line format: handles both file and commit items
     format = function(item, _picker)
-      local is_active = item.idx == state.pr.current_idx
-      local is_viewed = state.review.viewed_files[item.filename]
-      local hl        = STATUS_HL[item.status] or "Normal"
-      local stat_hl   = item.additions > 0 and "GhStatAdd" or "GhStatDel"
-      local prefix    = is_active and "▶ " or "  "
-      local name_hl   = is_active and "Special" or "Normal"
-      local viewed_chunk = is_viewed
-        and { "✔ ", "DiagnosticOk" }
-        or  { "  ", "Normal" }
-      return {
-        { prefix .. item.icon .. " ", is_active and "Special" or hl },
-        viewed_chunk,
-        { item.display .. " ",        name_hl },
-        { item.stats,                 stat_hl },
-      }
+      if item.type == "commit" then
+        local is_active = item.idx == state.pr.current_commit_idx
+        local prefix    = is_active and "▶ " or "  "
+        local name_hl   = is_active and "Special" or "Normal"
+        return {
+          { prefix,             is_active and "Special" or "Normal" },
+          { item.short_sha .. " ", "Comment" },
+          { item.display,       name_hl },
+        }
+      else
+        local is_active = item.idx == state.pr.current_idx
+        local is_viewed = state.review.viewed_files[item.filename]
+        local hl        = STATUS_HL[item.status] or "Normal"
+        local stat_hl   = item.additions > 0 and "GhStatAdd" or "GhStatDel"
+        local prefix    = is_active and "▶ " or "  "
+        local name_hl   = is_active and "Special" or "Normal"
+        local viewed_chunk = is_viewed
+          and { "✔ ", "DiagnosticOk" }
+          or  { "  ", "Normal" }
+        return {
+          { prefix .. item.icon .. " ", is_active and "Special" or hl },
+          viewed_chunk,
+          { item.display .. " ",        name_hl },
+          { item.stats,                 stat_hl },
+        }
+      end
     end,
 
     actions = {
@@ -180,10 +244,21 @@ function M.open(state, config)
   end
 end
 
---- Programmatically move the picker cursor to a file by index.
---- Used by ]f/[f navigation keymaps.
+--- Close and reopen the picker with items matching the current review_mode.
 --- @param state GhDashDiffState
---- @param idx number 1-based file index
+function M.refresh_items(state)
+  local config = require("gh-dash-diff").config
+  if state.layout.picker then
+    pcall(function() state.layout.picker:close() end)
+    state.layout.picker = nil
+  end
+  M.open(state, config)
+end
+
+--- Programmatically move the picker cursor to an item by index.
+--- Used by ]f/[f and ]g/[g navigation keymaps.
+--- @param state GhDashDiffState
+--- @param idx number 1-based index
 function M.select_by_index(state, idx)
   if state.layout.picker then
     pcall(function() state.layout.picker:set_cursor(idx) end)

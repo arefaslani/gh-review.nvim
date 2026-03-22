@@ -30,6 +30,11 @@ M.defaults = {
     next_comment   = "]x",
     prev_comment   = "[x",
 
+    -- Commit review mode
+    toggle_review_mode = "<leader>cm",
+    next_commit        = "]g",
+    prev_commit        = "[g",
+
     -- Comments (set on diff buffers)
     add_comment         = "<leader>cc",
     add_single_comment  = "<leader>ca",

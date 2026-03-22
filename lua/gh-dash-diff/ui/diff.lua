@@ -79,6 +79,19 @@ function M.set_keymaps(state, buf)
     require("gh-dash-diff.ui.navigation").prev_file(state)
   end, "Previous changed file")
 
+  -- Commit navigation
+  map(cfg.toggle_review_mode, function()
+    require("gh-dash-diff.ui.navigation").toggle_review_mode(state)
+  end, "Toggle file/commit review mode")
+
+  map(cfg.next_commit, function()
+    require("gh-dash-diff.ui.navigation").next_commit(state)
+  end, "Next commit")
+
+  map(cfg.prev_commit, function()
+    require("gh-dash-diff.ui.navigation").prev_commit(state)
+  end, "Previous commit")
+
   -- Comment navigation
   map(cfg.next_comment, function()
     require("gh-dash-diff.ui.comments").goto_next(buf)
@@ -184,6 +197,10 @@ function M.show_help(state)
     string.format("  %-16s  Next / prev comment", k(cfg.next_comment) .. " / " .. k(cfg.prev_comment)),
     string.format("  %-16s  Toggle file picker focus", k(cfg.toggle_picker)),
     "",
+    "  Commit Review",
+    string.format("  %-16s  Toggle file/commit mode", k(cfg.toggle_review_mode)),
+    string.format("  %-16s  Next / prev commit", k(cfg.next_commit) .. " / " .. k(cfg.prev_commit)),
+    "",
     "  Comments",
     string.format("  %-16s  Add inline comment (queued)", k(cfg.add_comment)),
     string.format("  %-16s  Post single comment (immediate)", k(cfg.add_single_comment)),
@@ -252,8 +269,9 @@ end
 --- buffers, enables diff mode, and sets buffer-local keymaps.
 --- @param state GhDashDiffState
 --- @param file GhFile
---- @param idx number 1-based index into state.pr.files
-function M.load_file(state, file, idx)
+--- @param idx number 1-based index into the current file list
+--- @param opts? {base_ref?: string, head_ref?: string} Override git refs (for commit mode)
+function M.load_file(state, file, idx, opts)
   local files_mod = require("gh-dash-diff.gh.files")
   local root = state.repo.root
 
@@ -262,9 +280,9 @@ function M.load_file(state, file, idx)
     return
   end
 
-  -- Use commit SHAs when available (immutable), fall back to branch refs
-  local base_ref = state.pr.base_sha or state.pr.base_ref
-  local head_ref = state.pr.head_sha or state.pr.head_ref
+  -- Use explicit refs from opts (commit mode), else fall back to PR SHAs/branch refs
+  local base_ref = (opts and opts.base_ref) or state.pr.base_sha or state.pr.base_ref
+  local head_ref = (opts and opts.head_ref) or state.pr.head_sha or state.pr.head_ref
 
   -- Handle renames: base uses the old filename, head uses the new one
   local base_filename = file.previous_filename or file.filename
@@ -380,10 +398,22 @@ function M._apply_buffers(state, file, base_lines, head_lines, idx)
     vim.cmd("diffthis")
     set_win_opts(left_win)
     vim.api.nvim_win_set_hl_ns(left_win, 0)
-    -- Winbar: PR title + (base)
-    local pr_label = state.pr.number and ("PR #" .. state.pr.number) or "PR"
-    if state.pr.title then pr_label = pr_label .. ": " .. state.pr.title end
-    vim.wo[left_win].winbar = " " .. pr_label .. "  %=%#Comment#(base)%* "
+    -- Winbar: show commit info in commit mode, PR title otherwise
+    local left_winbar
+    if state.pr.review_mode == "commits" and state.pr.current_commit_idx > 0 then
+      local commit = state.pr.commits[state.pr.current_commit_idx]
+      if commit then
+        local short_sha = commit.sha:sub(1, 7)
+        local msg = commit.message:match("^[^\n]*") or ""
+        left_winbar = " " .. short_sha .. ": " .. msg .. "  %=%#Comment#(base)%* "
+      end
+    end
+    if not left_winbar then
+      local pr_label = state.pr.number and ("PR #" .. state.pr.number) or "PR"
+      if state.pr.title then pr_label = pr_label .. ": " .. state.pr.title end
+      left_winbar = " " .. pr_label .. "  %=%#Comment#(base)%* "
+    end
+    vim.wo[left_win].winbar = left_winbar
   end
 
   if vim.api.nvim_win_is_valid(right_win) then
@@ -391,9 +421,20 @@ function M._apply_buffers(state, file, base_lines, head_lines, idx)
     vim.api.nvim_set_current_win(right_win)
     vim.cmd("diffthis")
     set_win_opts(right_win)
-    -- Winbar: current filename + (head) + optional reviewed indicator
-    local reviewed_label = state.review.viewed_files[head_filename] and "  %#DiagnosticOk#✔ Reviewed%* " or ""
-    vim.wo[right_win].winbar = " " .. head_filename .. "  %=%#Comment#(head)%*" .. reviewed_label
+    -- Winbar: show commit sha in commit mode, (head) + reviewed status otherwise
+    local right_winbar
+    if state.pr.review_mode == "commits" and state.pr.current_commit_idx > 0 then
+      local commit = state.pr.commits[state.pr.current_commit_idx]
+      if commit then
+        local short_sha = commit.sha:sub(1, 7)
+        right_winbar = " " .. head_filename .. "  %=%#Comment#(" .. short_sha .. ")%* "
+      end
+    end
+    if not right_winbar then
+      local reviewed_label = state.review.viewed_files[head_filename] and "  %#DiagnosticOk#✔ Reviewed%* " or ""
+      right_winbar = " " .. head_filename .. "  %=%#Comment#(head)%*" .. reviewed_label
+    end
+    vim.wo[right_win].winbar = right_winbar
   end
 
   -- Set buffer-local keymaps on both diff buffers
@@ -412,10 +453,12 @@ function M._apply_buffers(state, file, base_lines, head_lines, idx)
   -- Re-enable WinClosed guard
   state.layout.ready = true
 
-  -- Sync picker cursor so the active file is always visually highlighted,
-  -- regardless of how the load was triggered (picker click, ]f/[f, initial load).
-  local ok_p, picker_mod = pcall(require, "gh-dash-diff.ui.picker")
-  if ok_p then picker_mod.select_by_index(state, idx) end
+  -- Sync picker cursor: in files mode, keep picker in sync with active file.
+  -- In commit mode the picker shows commits, not files, so skip the sync.
+  if state.pr.review_mode ~= "commits" then
+    local ok_p, picker_mod = pcall(require, "gh-dash-diff.ui.picker")
+    if ok_p then picker_mod.select_by_index(state, idx) end
+  end
 end
 
 return M

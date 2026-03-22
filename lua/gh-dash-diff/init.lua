@@ -96,6 +96,12 @@ function M.open_pr(pr_number)
           local ok, comments_mod = pcall(require, "gh-dash-diff.ui.comments")
           if ok then comments_mod.render_all(threads or {}) end
         end)
+
+        -- Fetch commits in background (enables commit review mode)
+        local commits_mod = require("gh-dash-diff.gh.commits")
+        commits_mod.list(owner, name, pr_number, function(_, commits)
+          State.pr.commits = commits or {}
+        end)
       end)
     end)
     end) -- git_root

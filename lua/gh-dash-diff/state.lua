@@ -8,8 +8,12 @@ M.state = {
   pr = {
     number = nil, title = nil,
     head_ref = nil, base_ref = nil, head_sha = nil, base_sha = nil,
-    files = {},        -- GhFile[] from API
-    current_idx = 0,   -- 1-based index into files
+    files = {},              -- GhFile[] from API
+    current_idx = 0,         -- 1-based index into files
+    commits = {},            -- GhCommit[] from API
+    current_commit_idx = 0,  -- 1-based index into commits
+    review_mode = "files",   -- "files" or "commits"
+    commit_files = {},       -- GhFile[] for the currently selected commit
   },
 
   -- Review state
@@ -48,6 +52,10 @@ function M.reset()
       head_ref = nil, base_ref = nil, head_sha = nil, base_sha = nil,
       files = {},
       current_idx = 0,
+      commits = {},
+      current_commit_idx = 0,
+      review_mode = "files",
+      commit_files = {},
     },
     review = {
       pending_id = nil,
