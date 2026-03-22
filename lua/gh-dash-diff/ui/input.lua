@@ -80,11 +80,24 @@ local function find_thread_near(state, filepath, line, side)
   return (best_dist <= 5) and best or nil
 end
 
+--- Restore cursor position in a window after a float closes.
+--- @param win integer Diff window to restore focus/cursor in
+--- @param pos integer[] {row, col} cursor position to restore
+local function make_restore(win, pos)
+  return function()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_set_current_win(win)
+      pcall(vim.api.nvim_win_set_cursor, win, pos)
+    end
+  end
+end
+
 --- Open a simple floating text-input window and call `callback(body)` on submit.
 --- Keymaps:  <C-s> (any mode) or <CR> (normal) → submit; q / <Esc> (normal) → cancel.
 --- @param title string Window title shown in border
 --- @param callback fun(body: string)
-local function open_input_float(title, callback)
+--- @param after_close? fun() Optional callback run after the float closes (submit or cancel)
+local function open_input_float(title, callback, after_close)
   local width  = math.min(64, math.max(40, vim.o.columns - 20))
   local height = 8
   local buf, win = _create_float({
@@ -109,6 +122,7 @@ local function open_input_float(title, callback)
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
+    if after_close then vim.schedule(after_close) end
     if body ~= "" then callback(body) end
   end
 
@@ -117,6 +131,7 @@ local function open_input_float(title, callback)
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
+    if after_close then vim.schedule(after_close) end
   end
 
   local o = { buffer = buf, silent = true, nowait = true }
@@ -141,8 +156,10 @@ function M.open_comment(state)
   end
 
   -- Capture position before the float changes the current window
+  local saved_win = vim.api.nvim_get_current_win()
+  local saved_pos = vim.api.nvim_win_get_cursor(saved_win)
   local side = get_side(state)
-  local line = vim.api.nvim_win_get_cursor(0)[1]
+  local line = saved_pos[1]
   local path = comment_path(file, side)
 
   open_input_float(" Add Comment ", function(body)
@@ -162,7 +179,7 @@ function M.open_comment(state)
     -- Ask comments module to refresh signs/EOL indicators if available
     local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
     if ok then pcall(cm.update_pending, state) end
-  end)
+  end, make_restore(saved_win, saved_pos))
 end
 
 --- Open a floating window for a new standalone inline comment posted immediately.
@@ -182,8 +199,10 @@ function M.open_single_comment(state)
   end
 
   -- Capture position before the float changes the current window
+  local saved_win = vim.api.nvim_get_current_win()
+  local saved_pos = vim.api.nvim_win_get_cursor(saved_win)
   local side = get_side(state)
-  local line = vim.api.nvim_win_get_cursor(0)[1]
+  local line = saved_pos[1]
   local path = comment_path(file, side)
 
   open_input_float(" Post Comment (immediate) ", function(body)
@@ -211,7 +230,7 @@ function M.open_single_comment(state)
         if ok then pcall(cm.render_for_file, state, file.filename) end
       end)
     end)
-  end)
+  end, make_restore(saved_win, saved_pos))
 end
 
 --- Open a floating window for replying to a review thread near the cursor.
@@ -224,8 +243,10 @@ function M.reply_thread(state)
     return
   end
 
+  local saved_win = vim.api.nvim_get_current_win()
+  local saved_pos = vim.api.nvim_win_get_cursor(saved_win)
   local side   = get_side(state)
-  local line   = vim.api.nvim_win_get_cursor(0)[1]
+  local line   = saved_pos[1]
   local path   = comment_path(file, side)
   local thread = find_thread_near(state, path, line, side)
 
@@ -261,7 +282,7 @@ function M.reply_thread(state)
         end)
       end
     )
-  end)
+  end, make_restore(saved_win, saved_pos))
 end
 
 --- Delete the pending comment nearest to the cursor on the current side.
