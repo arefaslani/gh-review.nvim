@@ -106,6 +106,11 @@ function M.set_keymaps(state, buf)
     require("gh-dash-diff.ui.navigation").toggle_picker(state)
   end, "Toggle file picker focus")
 
+  -- Explorer sidebar toggle
+  map(cfg.toggle_explorer, function()
+    require("gh-dash-diff.ui.picker").toggle(state)
+  end, "Toggle explorer sidebar visibility")
+
   -- Comment actions
   map(cfg.add_comment, function()
     require("gh-dash-diff.ui.input").open_comment(state)
@@ -196,6 +201,7 @@ function M.show_help(state)
     string.format("  %-16s  Next / prev hunk (built-in)", "]c / [c"),
     string.format("  %-16s  Next / prev comment", k(cfg.next_comment) .. " / " .. k(cfg.prev_comment)),
     string.format("  %-16s  Toggle file picker focus", k(cfg.toggle_picker)),
+    string.format("  %-16s  Toggle explorer sidebar", k(cfg.toggle_explorer)),
     "",
     "  Commit Review",
     string.format("  %-16s  Toggle file/commit mode", k(cfg.toggle_review_mode)),

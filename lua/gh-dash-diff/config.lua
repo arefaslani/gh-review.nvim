@@ -22,7 +22,8 @@ M.defaults = {
   -- Keymaps (set to false to disable individual bindings)
   keymaps = {
     -- Snacks picker sidebar
-    toggle_picker  = "t",
+    toggle_picker   = "t",
+    toggle_explorer = "<leader>e",
 
     -- Navigation (set on diff buffers)
     next_file      = "]f",
