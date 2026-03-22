@@ -226,6 +226,8 @@ function M.open(state, config)
       load_item_diff(state, picker:current())
     end
 
+    local cfg = require("gh-dash-diff").config.keymaps
+
     -- List window keymaps
     local list_win = picker.layout and picker.layout.wins and picker.layout.wins.list
     if list_win and list_win:valid() then
@@ -233,6 +235,11 @@ function M.open(state, config)
       vim.keymap.set("n", "<CR>", open_current, { buffer = buf, silent = true })
       vim.keymap.set("n", "o", open_current, { buffer = buf, silent = true })
       vim.keymap.set("n", "l", open_current, { buffer = buf, silent = true })
+      if cfg.toggle_explorer then
+        vim.keymap.set("n", cfg.toggle_explorer, function()
+          M.toggle(state)
+        end, { buffer = buf, silent = true })
+      end
     end
 
     -- Input window keymaps
@@ -240,6 +247,11 @@ function M.open(state, config)
     if input_win and input_win:valid() then
       local buf = input_win.buf
       vim.keymap.set({ "n", "i" }, "<CR>", open_current, { buffer = buf, silent = true })
+      if cfg.toggle_explorer then
+        vim.keymap.set("n", cfg.toggle_explorer, function()
+          M.toggle(state)
+        end, { buffer = buf, silent = true })
+      end
     end
   end
 end
