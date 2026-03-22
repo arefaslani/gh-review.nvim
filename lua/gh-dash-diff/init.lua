@@ -1,6 +1,5 @@
 local M = {}
 M._initialized = false
-M._dash_buf = nil
 
 function M.setup(opts)
   local config = require("gh-dash-diff.config")
@@ -59,12 +58,6 @@ function M.open_pr(pr_number)
   vim.notify("gh-dash-diff: Loading PR #" .. pr_number .. "…", vim.log.levels.INFO)
   vim.cmd("redraw")
 
-  -- Close gh-dash terminal if it's open
-  if M._dash_buf and vim.api.nvim_buf_is_valid(M._dash_buf) then
-    vim.api.nvim_buf_delete(M._dash_buf, { force = true })
-    M._dash_buf = nil
-  end
-
   local State = require("gh-dash-diff.state").state
   local repo_mod = require("gh-dash-diff.gh.repo")
   local prs_mod = require("gh-dash-diff.gh.prs")
@@ -115,34 +108,37 @@ function M.close()
   require("gh-dash-diff.state").reset()
 end
 
---- Open gh-dash inside a Neovim terminal buffer.
---- gh-dash is configured to send :GhDashDiff <pr_number> back to this Neovim instance.
+--- Open a Snacks picker to browse and select PRs for the current repo.
 function M.open_dash()
   if not M._initialized then M.setup({}) end
 
-  local server = vim.v.servername
-  if not server or server == "" then
-    vim.notify("gh-dash-diff: No Neovim server address. Start Neovim with --listen or ensure it has a server.", vim.log.levels.ERROR)
-    return
-  end
+  vim.notify("gh-dash-diff: Loading PRs…", vim.log.levels.INFO)
 
-  vim.notify("gh-dash-diff: Loading gh-dash…", vim.log.levels.INFO)
+  local repo_mod = require("gh-dash-diff.gh.repo")
+  local prs_mod  = require("gh-dash-diff.gh.prs")
 
-  local buf = vim.api.nvim_create_buf(false, true)
-  M._dash_buf = buf
-  vim.api.nvim_set_current_buf(buf)
-  vim.fn.termopen("gh dash", {
-    env = { NVIM_SERVER = server },
-    on_exit = function(_, _)
-      if vim.api.nvim_buf_is_valid(buf) then
-        vim.api.nvim_buf_delete(buf, { force = true })
+  repo_mod.detect(nil, function(err, owner, name)
+    if err then
+      vim.notify("gh-dash-diff: " .. err, vim.log.levels.ERROR)
+      return
+    end
+
+    prs_mod.list(owner, name, nil, function(err2, prs)
+      if err2 then
+        vim.notify("gh-dash-diff: " .. err2, vim.log.levels.ERROR)
+        return
       end
-      if M._dash_buf == buf then
-        M._dash_buf = nil
+
+      if not prs or #prs == 0 then
+        vim.notify("gh-dash-diff: No open PRs found.", vim.log.levels.INFO)
+        return
       end
-    end,
-  })
-  vim.cmd("startinsert")
+
+      require("gh-dash-diff.ui.pr_picker").open(prs, {
+        title = string.format("PRs — %s/%s", owner, name),
+      })
+    end)
+  end)
 end
 
 return M
