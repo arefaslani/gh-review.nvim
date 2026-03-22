@@ -245,14 +245,36 @@ function M.open(state, config)
 end
 
 --- Close and reopen the picker with items matching the current review_mode.
+--- Uses vim.schedule to avoid Snacks WinResized errors during teardown.
 --- @param state GhDashDiffState
 function M.refresh_items(state)
   local config = require("gh-dash-diff").config
+
+  -- Temporarily disable WinClosed guard during picker swap
+  state.layout.ready = false
+
   if state.layout.picker then
     pcall(function() state.layout.picker:close() end)
     state.layout.picker = nil
   end
-  M.open(state, config)
+
+  -- Defer reopen to next tick so Snacks finishes cleanup
+  vim.schedule(function()
+    M.open(state, config)
+
+    -- Re-equalize diff windows after picker reopens
+    local left_win = state.layout.left_win
+    local right_win = state.layout.right_win
+    if left_win and vim.api.nvim_win_is_valid(left_win)
+      and right_win and vim.api.nvim_win_is_valid(right_win) then
+      local total = vim.api.nvim_win_get_width(left_win)
+        + vim.api.nvim_win_get_width(right_win)
+      local half = math.floor(total / 2)
+      vim.api.nvim_win_set_width(left_win, half)
+    end
+
+    state.layout.ready = true
+  end)
 end
 
 --- Programmatically move the picker cursor to an item by index.
