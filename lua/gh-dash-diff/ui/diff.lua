@@ -373,6 +373,11 @@ function M._apply_buffers(state, file, base_lines, head_lines, idx)
 
   -- Re-enable WinClosed guard
   state.layout.ready = true
+
+  -- Sync picker cursor so the active file is always visually highlighted,
+  -- regardless of how the load was triggered (picker click, ]f/[f, initial load).
+  local ok_p, picker_mod = pcall(require, "gh-dash-diff.ui.picker")
+  if ok_p then picker_mod.select_by_index(state, idx) end
 end
 
 return M
