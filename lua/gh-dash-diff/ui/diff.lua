@@ -3,6 +3,8 @@ local M = {}
 local BINARY_PLACEHOLDER = { "[Binary file — diff not available]" }
 local LOADING_PLACEHOLDER = { "" }
 
+local _buf_counter = 0
+
 --- Create a scratch buffer for diff display.
 --- @param lines string[] File content lines
 --- @param uri string Buffer name (e.g. "base://src/foo.lua")
@@ -10,9 +12,10 @@ local LOADING_PLACEHOLDER = { "" }
 --- @param state GhDashDiffState
 --- @return integer buf Buffer handle
 local function create_diff_buf(lines, uri, filetype, state)
+  _buf_counter = _buf_counter + 1
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.api.nvim_buf_set_name(buf, uri)
+  vim.api.nvim_buf_set_name(buf, uri .. "#" .. _buf_counter)
   vim.api.nvim_set_option_value("buftype",    "nofile", { buf = buf })
   vim.api.nvim_set_option_value("bufhidden",  "wipe",   { buf = buf })
   vim.api.nvim_set_option_value("swapfile",   false,    { buf = buf })

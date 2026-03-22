@@ -6,6 +6,7 @@ function M.next_file(state)
   local files = state.pr.files
   if #files == 0 then return end
   local idx = (state.pr.current_idx % #files) + 1
+  if idx == state.pr.current_idx then return end
   state.pr.current_idx = idx
   require("gh-dash-diff.ui.picker").select_by_index(state, idx)
   require("gh-dash-diff.ui.diff").load_file(state, files[idx], idx)
@@ -18,6 +19,7 @@ function M.prev_file(state)
   if #files == 0 then return end
   local idx = state.pr.current_idx - 1
   if idx < 1 then idx = #files end
+  if idx == state.pr.current_idx then return end
   state.pr.current_idx = idx
   require("gh-dash-diff.ui.picker").select_by_index(state, idx)
   require("gh-dash-diff.ui.diff").load_file(state, files[idx], idx)

@@ -149,6 +149,7 @@ end
 --- @param ns_signs integer
 --- @param ns_eol integer
 local function clear_buf(buf, ns_comments, ns_signs, ns_eol)
+  if not buf then return end
   if not vim.api.nvim_buf_is_valid(buf) then return end
   vim.api.nvim_buf_clear_namespace(buf, ns_comments, 0, -1)
   vim.api.nvim_buf_clear_namespace(buf, ns_signs, 0, -1)
