@@ -63,6 +63,7 @@ function M.reset()
       right_buf = nil,
       last_diff_win = nil,
       all_bufs = {},
+      ready = false,
     },
     ns = ns,
   }

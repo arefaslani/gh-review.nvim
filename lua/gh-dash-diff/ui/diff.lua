@@ -126,9 +126,10 @@ function M.set_keymaps(state, buf)
 
   -- Refresh
   map(cfg.refresh, function()
+    local pr_number = state.pr.number
     local main = require("gh-dash-diff")
     main.close()
-    main.open_pr(state.pr.number)
+    main.open_pr(pr_number)
   end, "Refresh PR data")
 
   -- Help

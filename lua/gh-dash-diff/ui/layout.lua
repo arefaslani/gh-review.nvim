@@ -38,6 +38,10 @@ end
 --- Tear down the entire PR review session.
 --- @param state GhDashDiffState
 function M.close(state)
+  -- Disable WinClosed guard immediately so closing windows doesn't schedule
+  -- a redundant M.close() (which would race with a subsequent open_pr).
+  state.layout.ready = false
+
   -- 1. Close the Snacks picker if open
   if state.layout.picker then
     pcall(function() state.layout.picker:close() end)
