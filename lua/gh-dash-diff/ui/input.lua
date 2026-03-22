@@ -56,7 +56,28 @@ local function comment_path(file, side)
   return file.filename
 end
 
---- Find a review thread close to the given file/line/side.
+--- Find all review threads within ±5 lines of the given file/line/side.
+--- @param state GhDashDiffState
+--- @param filepath string
+--- @param line integer
+--- @param side "LEFT"|"RIGHT"
+--- @return GhThread[]
+local function find_threads_near(state, filepath, line, side)
+  local results = {}
+  for _, thread in ipairs(state.review.threads or {}) do
+    local same_file = (thread.path == filepath)
+    local same_side = (thread.side == side or thread.side == nil)
+    if same_file and same_side then
+      local t_line = thread.line or thread.original_line or 0
+      if math.abs(t_line - line) <= 5 then
+        table.insert(results, thread)
+      end
+    end
+  end
+  return results
+end
+
+--- Find the closest review thread within ±5 lines of the given file/line/side.
 --- Used by reply_thread() to locate the thread under the cursor.
 --- @param state GhDashDiffState
 --- @param filepath string
@@ -65,19 +86,14 @@ end
 --- @return GhThread|nil
 local function find_thread_near(state, filepath, line, side)
   local best, best_dist = nil, math.huge
-  for _, thread in ipairs(state.review.threads or {}) do
-    local same_file = (thread.path == filepath)
-    local same_side = (thread.side == side or thread.side == nil)
-    if same_file and same_side then
-      local t_line = thread.line or thread.original_line or 0
-      local dist = math.abs(t_line - line)
-      if dist < best_dist then
-        best, best_dist = thread, dist
-      end
+  for _, thread in ipairs(find_threads_near(state, filepath, line, side)) do
+    local t_line = thread.line or thread.original_line or 0
+    local dist = math.abs(t_line - line)
+    if dist < best_dist then
+      best, best_dist = thread, dist
     end
   end
-  -- Accept threads within ±5 lines of cursor
-  return (best_dist <= 5) and best or nil
+  return best
 end
 
 --- Restore cursor position in a window after a float closes.
@@ -235,6 +251,7 @@ end
 
 --- Open a floating window for replying to a review thread near the cursor.
 --- Replies are sent IMMEDIATELY to GitHub (not queued as pending).
+--- When multiple threads exist near the cursor, shows a selection dialog first.
 --- @param state GhDashDiffState
 function M.reply_thread(state)
   local file = state.pr.files[state.pr.current_idx]
@@ -245,108 +262,73 @@ function M.reply_thread(state)
 
   local saved_win = vim.api.nvim_get_current_win()
   local saved_pos = vim.api.nvim_win_get_cursor(saved_win)
-  local side   = get_side(state)
-  local line   = saved_pos[1]
-  local path   = comment_path(file, side)
-  local thread = find_thread_near(state, path, line, side)
+  local side    = get_side(state)
+  local line    = saved_pos[1]
+  local path    = comment_path(file, side)
+  local threads = find_threads_near(state, path, line, side)
 
-  if not thread then
+  if #threads == 0 then
     vim.notify("gh-dash-diff: No thread found near cursor", vim.log.levels.WARN)
     return
   end
 
-  local root_comment = thread.comments and thread.comments[1]
-  if not root_comment then
-    vim.notify("gh-dash-diff: Thread has no comments", vim.log.levels.WARN)
-    return
-  end
+  --- Open the reply input float for a specific thread.
+  --- @param thread GhThread
+  local function open_reply_for(thread)
+    local root_comment = thread.comments and thread.comments[1]
+    if not root_comment then
+      vim.notify("gh-dash-diff: Thread has no comments", vim.log.levels.WARN)
+      return
+    end
 
-  open_input_float(" Reply to Thread ", function(body)
-    local reviews = require("gh-dash-diff.gh.reviews")
-    local owner   = state.repo.owner
-    local repo    = state.repo.name
+    open_input_float(" Reply to Thread ", function(body)
+      local reviews = require("gh-dash-diff.gh.reviews")
+      local owner   = state.repo.owner
+      local repo    = state.repo.name
 
-    reviews.reply_to_comment(owner, repo, state.pr.number, root_comment.id, body,
-      function(err, _)
-        if err then
-          vim.notify("gh-dash-diff: Reply failed: " .. err, vim.log.levels.ERROR)
-          return
+      reviews.reply_to_comment(owner, repo, state.pr.number, root_comment.id, body,
+        function(err, _)
+          if err then
+            vim.notify("gh-dash-diff: Reply failed: " .. err, vim.log.levels.ERROR)
+            return
+          end
+          vim.notify("gh-dash-diff: Reply posted", vim.log.levels.INFO)
+          -- Refresh threads and re-render comments for current file
+          reviews.fetch_threads(owner, repo, state.pr.number, function(_, updated)
+            if not updated then return end
+            state.review.threads = updated
+            local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+            if ok then pcall(cm.render_for_file, state, file.filename) end
+          end)
         end
-        vim.notify("gh-dash-diff: Reply posted", vim.log.levels.INFO)
-        -- Refresh threads and re-render comments for current file
-        reviews.fetch_threads(owner, repo, state.pr.number, function(_, threads)
-          if not threads then return end
-          state.review.threads = threads
-          local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
-          if ok then pcall(cm.render_for_file, state, file.filename) end
-        end)
-      end
-    )
-  end, make_restore(saved_win, saved_pos))
-end
+      )
+    end, make_restore(saved_win, saved_pos))
+  end
 
---- Delete a pending comment, with a numbered selection dialog when multiple exist.
---- If only one pending comment exists on the current file, deletes it directly.
---- If multiple exist, shows a floating list so the user presses 1-9 to choose.
---- @param state GhDashDiffState
-function M.delete_pending(state)
-  local file = state.pr.files[state.pr.current_idx]
-  if not file then
-    vim.notify("gh-dash-diff: No file selected", vim.log.levels.WARN)
+  -- Only one thread — reply directly without a dialog
+  if #threads == 1 then
+    open_reply_for(threads[1])
     return
   end
 
-  -- Collect ALL pending comments for the current file (both sides)
-  local candidates = {}
-  for i, pc in ipairs(state.review.pending_comments or {}) do
-    if pc.path == file.filename
-      or (file.previous_filename and pc.path == file.previous_filename) then
-      table.insert(candidates, { orig_idx = i, pc = pc })
-    end
-  end
+  -- Multiple threads — show numbered selection dialog
+  local diff_win = saved_win
 
-  if #candidates == 0 then
-    vim.notify("gh-dash-diff: No pending comments on this file", vim.log.levels.WARN)
-    return
-  end
-
-  local function do_delete(candidate)
-    -- Remove by original index; re-search by identity since indices may shift
-    for i, pc in ipairs(state.review.pending_comments) do
-      if pc == candidate.pc then
-        table.remove(state.review.pending_comments, i)
-        break
-      end
-    end
-    vim.notify(
-      string.format("gh-dash-diff: Pending comment deleted (%d remaining)", #state.review.pending_comments),
-      vim.log.levels.INFO
-    )
-    local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
-    if ok then pcall(cm.render_for_file, state, file.filename) end
-  end
-
-  -- Only one candidate — delete directly without a dialog
-  if #candidates == 1 then
-    do_delete(candidates[1])
-    return
-  end
-
-  -- Multiple candidates — show numbered selection dialog
-  local diff_win = vim.api.nvim_get_current_win()
-  local saved_pos = vim.api.nvim_win_get_cursor(diff_win)
-
-  local header = { "  Delete pending comment:", "" }
-  local lines = vim.deepcopy(header)
-  for i, c in ipairs(candidates) do
-    local preview = (c.pc.body or ""):gsub("\n", " ")
+  -- Build dialog lines with a preview of the first comment per thread
+  local lines = { "  Reply to thread:", "" }
+  for i, t in ipairs(threads) do
+    local first = t.comments and t.comments[1]
+    local author  = first and first.user and first.user.login or "unknown"
+    local preview = first and (first.body or "") or ""
+    preview = preview:gsub("\n", " ")
     if #preview > 40 then preview = preview:sub(1, 40) .. "…" end
-    table.insert(lines, string.format("  %d.  line %-4d (%s)  %q", i, c.pc.line or 0, c.pc.side or "?", preview))
+    local t_line = t.line or t.original_line or 0
+    table.insert(lines, string.format("  %d.  line %d  @%s: %s", i, t_line, author, preview))
   end
   table.insert(lines, "")
-  table.insert(lines, "  Press 1-9 to delete  |  q/<Esc> to cancel")
+  table.insert(lines, "  Press 1-9 to select  |  q/<Esc> to cancel")
 
-  local width  = math.min(72, math.max(50, vim.o.columns - 10))
+  local width  = math.min(80, math.max(50, vim.o.columns - 10))
   local height = #lines
   local row    = math.max(0, math.floor((vim.o.lines - height) / 2) - 1)
   local col    = math.max(0, math.floor((vim.o.columns - width) / 2))
@@ -365,7 +347,7 @@ function M.delete_pending(state)
     height    = height,
     border    = "rounded",
     style     = "minimal",
-    title     = " Delete Pending Comment ",
+    title     = " Reply to Thread ",
     title_pos = "center",
     zindex    = 60,
   })
@@ -381,12 +363,168 @@ function M.delete_pending(state)
   vim.keymap.set("n", "q",     close_dialog, o)
   vim.keymap.set("n", "<Esc>", close_dialog, o)
 
-  for i = 1, math.min(#candidates, 9) do
+  for i = 1, math.min(#threads, 9) do
     vim.keymap.set("n", tostring(i), function()
       close_dialog()
-      do_delete(candidates[i])
+      open_reply_for(threads[i])
     end, o)
   end
+end
+
+--- Delete a pending or posted comment on the current file.
+--- Pending comments are removed from local state; posted comments are deleted via API.
+--- Only posted comments authored by the current user are shown.
+--- Shows a numbered selection dialog when multiple candidates exist.
+--- @param state GhDashDiffState
+function M.delete_pending(state)
+  local file = state.pr.files[state.pr.current_idx]
+  if not file then
+    vim.notify("gh-dash-diff: No file selected", vim.log.levels.WARN)
+    return
+  end
+
+  local reviews = require("gh-dash-diff.gh.reviews")
+
+  reviews.get_authenticated_user(function(auth_err, current_login)
+    if auth_err then
+      vim.notify("gh-dash-diff: Could not get current user: " .. auth_err, vim.log.levels.WARN)
+    end
+
+    -- Collect pending comments for the current file
+    local candidates = {}
+    for _, pc in ipairs(state.review.pending_comments or {}) do
+      if pc.path == file.filename
+        or (file.previous_filename and pc.path == file.previous_filename) then
+        local preview = (pc.body or ""):gsub("\n", " ")
+        if #preview > 40 then preview = preview:sub(1, 40) .. "…" end
+        table.insert(candidates, {
+          kind    = "pending",
+          label   = string.format("[PENDING] line %d: %s", pc.line or 0, preview),
+          pc      = pc,
+        })
+      end
+    end
+
+    -- Collect posted comments authored by the current user on this file
+    if current_login then
+      for _, thread in ipairs(state.review.threads or {}) do
+        local same_file = (thread.path == file.filename)
+          or (file.previous_filename and thread.path == file.previous_filename)
+        if same_file then
+          for _, comment in ipairs(thread.comments or {}) do
+            local author = comment.user and comment.user.login
+            if author == current_login then
+              local preview = (comment.body or ""):gsub("\n", " ")
+              if #preview > 40 then preview = preview:sub(1, 40) .. "…" end
+              table.insert(candidates, {
+                kind    = "posted",
+                label   = string.format("[POSTED @%s] line %d: %s",
+                  author, comment.line or comment.original_line or 0, preview),
+                comment = comment,
+              })
+            end
+          end
+        end
+      end
+    end
+
+    if #candidates == 0 then
+      vim.notify("gh-dash-diff: No deletable comments on this file", vim.log.levels.WARN)
+      return
+    end
+
+    local function do_delete(candidate)
+      if candidate.kind == "pending" then
+        for i, pc in ipairs(state.review.pending_comments) do
+          if pc == candidate.pc then
+            table.remove(state.review.pending_comments, i)
+            break
+          end
+        end
+        vim.notify(
+          string.format("gh-dash-diff: Pending comment deleted (%d remaining)", #state.review.pending_comments),
+          vim.log.levels.INFO
+        )
+        local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+        if ok then pcall(cm.render_for_file, state, file.filename) end
+      else
+        local owner = state.repo.owner
+        local repo  = state.repo.name
+        reviews.delete_comment(owner, repo, state.pr.number, candidate.comment.id, function(del_err)
+          if del_err then
+            vim.notify("gh-dash-diff: Delete failed: " .. del_err, vim.log.levels.ERROR)
+            return
+          end
+          vim.notify("gh-dash-diff: Comment deleted", vim.log.levels.INFO)
+          reviews.fetch_threads(owner, repo, state.pr.number, function(_, threads)
+            if not threads then return end
+            state.review.threads = threads
+            local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+            if ok then pcall(cm.render_for_file, state, file.filename) end
+          end)
+        end)
+      end
+    end
+
+    -- Only one candidate — delete directly without a dialog
+    if #candidates == 1 then
+      do_delete(candidates[1])
+      return
+    end
+
+    -- Multiple candidates — show numbered selection dialog
+    local diff_win = vim.api.nvim_get_current_win()
+    local saved_pos = vim.api.nvim_win_get_cursor(diff_win)
+
+    local lines = { "  Delete comment:", "" }
+    for i, c in ipairs(candidates) do
+      table.insert(lines, string.format("  %d.  %s", i, c.label))
+    end
+    table.insert(lines, "")
+    table.insert(lines, "  Press 1-9 to delete  |  q/<Esc> to cancel")
+
+    local width  = math.min(80, math.max(50, vim.o.columns - 10))
+    local height = #lines
+    local row    = math.max(0, math.floor((vim.o.lines - height) / 2) - 1)
+    local col    = math.max(0, math.floor((vim.o.columns - width) / 2))
+
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.api.nvim_set_option_value("buftype",    "nofile", { buf = buf })
+    vim.api.nvim_set_option_value("bufhidden",  "wipe",   { buf = buf })
+    vim.api.nvim_set_option_value("modifiable", false,    { buf = buf })
+
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative  = "editor",
+      row       = row,
+      col       = col,
+      width     = width,
+      height    = height,
+      border    = "rounded",
+      style     = "minimal",
+      title     = " Delete Comment ",
+      title_pos = "center",
+      zindex    = 60,
+    })
+
+    local function close_dialog()
+      if vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_win_close(win, true)
+      end
+      vim.schedule(make_restore(diff_win, saved_pos))
+    end
+
+    local o = { buffer = buf, silent = true, nowait = true }
+    vim.keymap.set("n", "q",     close_dialog, o)
+    vim.keymap.set("n", "<Esc>", close_dialog, o)
+
+    for i = 1, math.min(#candidates, 9) do
+      vim.keymap.set("n", tostring(i), function()
+        close_dialog()
+        do_delete(candidates[i])
+      end, o)
+    end
+  end)
 end
 
 --- Open the review submission dialog.
