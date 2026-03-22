@@ -30,6 +30,7 @@ M.state = {
     right_buf = nil,         -- PR diff buffer
     last_diff_win = nil,     -- last focused diff win (for t toggle)
     all_bufs = {},           -- all created buffers for cleanup
+    ready = false,           -- set true after layout is fully open
   },
 
   -- Extmark namespace handles (created once, reused)

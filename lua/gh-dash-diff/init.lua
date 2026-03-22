@@ -28,10 +28,13 @@ function M.setup(opts)
     end,
   })
 
+  -- WinClosed guard: only tear down if layout is fully ready
+  -- (layout.ready is set after layout.open() completes)
   vim.api.nvim_create_autocmd("WinClosed", {
     group = group,
     callback = function(ev)
       local s = require("gh-dash-diff.state").state
+      if not s.layout.ready then return end
       local closed = tonumber(ev.match)
       if closed == s.layout.left_win or closed == s.layout.right_win then
         vim.schedule(function()
@@ -69,6 +72,11 @@ function M.open_pr(pr_number)
     State.repo.owner = owner
     State.repo.name = name
 
+    -- Get git root (needed by diff.lua for git show)
+    repo_mod.git_root(nil, function(root_err, root)
+      if root_err then vim.notify("gh-dash-diff: " .. root_err, vim.log.levels.ERROR); return end
+      State.repo.root = root
+
     prs_mod.get(owner, name, pr_number, function(err2, pr)
       if err2 then vim.notify("gh-dash-diff: " .. err2, vim.log.levels.ERROR); return end
       State.pr.number = pr.number
@@ -88,15 +96,18 @@ function M.open_pr(pr_number)
         -- Fetch comments in background
         reviews_mod.fetch_threads(owner, name, pr_number, function(_, threads)
           State.review.threads = threads or {}
-          require("gh-dash-diff.ui.comments").render_all(threads or {})
+          local ok, comments_mod = pcall(require, "gh-dash-diff.ui.comments")
+          if ok then comments_mod.render_all(threads or {}) end
         end)
       end)
     end)
+    end) -- git_root
   end)
 end
 
 function M.close()
-  require("gh-dash-diff.ui.layout").close()
+  local state = require("gh-dash-diff.state").state
+  require("gh-dash-diff.ui.layout").close(state)
   require("gh-dash-diff.state").reset()
 end
 
