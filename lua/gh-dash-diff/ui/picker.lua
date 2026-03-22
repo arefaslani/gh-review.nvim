@@ -240,6 +240,22 @@ function M.open(state, config)
           M.toggle(state)
         end, { buffer = buf, silent = true })
       end
+      if cfg.toggle_viewed then
+        vim.keymap.set("n", cfg.toggle_viewed, function()
+          local item = picker:current()
+          if item and item.type == "file" and item.filename then
+            local viewed = state.review.viewed_files
+            if viewed[item.filename] then
+              viewed[item.filename] = nil
+              vim.notify("Unmarked: " .. item.filename)
+            else
+              viewed[item.filename] = true
+              vim.notify("Viewed: " .. item.filename)
+            end
+            M.refresh(state)
+          end
+        end, { buffer = list_win.buf, silent = true })
+      end
     end
 
     -- Input window keymaps
