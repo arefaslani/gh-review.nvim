@@ -194,6 +194,17 @@ function M.render_for_file(state, filename)
   local left_buf = state.layout.left_buf
   local right_buf = state.layout.right_buf
 
+  -- Snapshot cursor positions before touching extmarks.  Clearing virtual
+  -- lines from scrollbound diff windows can trigger scroll-sync and jump
+  -- the cursor to the top.
+  local saved_cursors = {}
+  for _, wk in ipairs({ "left_win", "right_win" }) do
+    local w = state.layout[wk]
+    if w and vim.api.nvim_win_is_valid(w) then
+      saved_cursors[wk] = vim.api.nvim_win_get_cursor(w)
+    end
+  end
+
   -- Clear previous extmarks on both buffers
   clear_buf(left_buf, ns_c, ns_s, ns_e)
   clear_buf(right_buf, ns_c, ns_s, ns_e)
@@ -239,6 +250,14 @@ function M.render_for_file(state, filename)
           priority = 20,
         })
       end
+    end
+  end
+
+  -- Restore cursor positions that may have been disturbed by extmark changes.
+  for _, wk in ipairs({ "left_win", "right_win" }) do
+    local w = state.layout[wk]
+    if saved_cursors[wk] and w and vim.api.nvim_win_is_valid(w) then
+      pcall(vim.api.nvim_win_set_cursor, w, saved_cursors[wk])
     end
   end
 end

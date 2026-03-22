@@ -206,11 +206,15 @@ function M.show_help(state)
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
+    -- Double-schedule so the restore runs after any callbacks queued by the
+    -- window close itself (WinClosed autocmds, scrollbind sync, etc.).
     vim.schedule(function()
-      if vim.api.nvim_win_is_valid(diff_win) then
-        vim.api.nvim_set_current_win(diff_win)
-        pcall(vim.api.nvim_win_set_cursor, diff_win, saved_pos)
-      end
+      vim.schedule(function()
+        if vim.api.nvim_win_is_valid(diff_win) then
+          vim.api.nvim_set_current_win(diff_win)
+          pcall(vim.api.nvim_win_set_cursor, diff_win, saved_pos)
+        end
+      end)
     end)
   end
 
