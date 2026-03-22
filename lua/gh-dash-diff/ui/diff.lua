@@ -99,6 +99,10 @@ function M.set_keymaps(state, buf)
     require("gh-dash-diff.ui.input").reply_thread(state)
   end, "Reply to thread")
 
+  map(cfg.delete_comment, function()
+    require("gh-dash-diff.ui.input").delete_pending(state)
+  end, "Delete pending comment")
+
   map(cfg.toggle_comments, function()
     require("gh-dash-diff.ui.comments").toggle(state)
   end, "Toggle comment visibility")
@@ -119,6 +123,82 @@ function M.set_keymaps(state, buf)
     main.close()
     main.open_pr(state.pr.number)
   end, "Refresh PR data")
+
+  -- Help
+  map("?", function() M.show_help(state) end, "Show keybinding help")
+end
+
+--- Show a floating window listing all PR review keybindings.
+--- Reads actual key values from config so user overrides are reflected.
+--- @param state GhDashDiffState
+function M.show_help(state)
+  local cfg = require("gh-dash-diff").config.keymaps
+
+  -- Helper to display a key, replacing false/nil with "(disabled)"
+  local function k(key)
+    if key == false or key == nil then return "(disabled)" end
+    return tostring(key)
+  end
+
+  local lines = {
+    "  PR Review — Keybindings",
+    "  " .. string.rep("─", 34),
+    "  Navigation",
+    string.format("  %-16s  Next / prev file", k(cfg.next_file) .. " / " .. k(cfg.prev_file)),
+    string.format("  %-16s  Next / prev hunk (built-in)", "]c / [c"),
+    string.format("  %-16s  Next / prev comment", k(cfg.next_comment) .. " / " .. k(cfg.prev_comment)),
+    string.format("  %-16s  Toggle file picker focus", k(cfg.toggle_picker)),
+    "",
+    "  Comments",
+    string.format("  %-16s  Add inline comment (queued)", k(cfg.add_comment)),
+    string.format("  %-16s  Reply to thread (immediate)", k(cfg.reply_thread)),
+    string.format("  %-16s  Toggle comment visibility", k(cfg.toggle_comments)),
+    "",
+    "  Review",
+    string.format("  %-16s  Submit review", k(cfg.submit_review)),
+    "",
+    "  General",
+    string.format("  %-16s  Close PR review", k(cfg.close)),
+    string.format("  %-16s  Refresh PR data", k(cfg.refresh)),
+    string.format("  %-16s  This help", "?"),
+    "",
+    "  Press q or <Esc> to close",
+  }
+
+  local width  = 52
+  local height = #lines
+  local row    = math.max(0, math.floor((vim.o.lines - height) / 2) - 1)
+  local col    = math.max(0, math.floor((vim.o.columns - width) / 2))
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_set_option_value("buftype",    "nofile", { buf = buf })
+  vim.api.nvim_set_option_value("bufhidden",  "wipe",   { buf = buf })
+  vim.api.nvim_set_option_value("modifiable", false,    { buf = buf })
+
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative  = "editor",
+    row       = row,
+    col       = col,
+    width     = width,
+    height    = height,
+    border    = "rounded",
+    style     = "minimal",
+    title     = " PR Review Help ",
+    title_pos = "center",
+    zindex    = 60,
+  })
+  vim.api.nvim_set_option_value("cursorline", false, { win = win })
+
+  local function close()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+
+  local o = { buffer = buf, silent = true, nowait = true }
+  vim.keymap.set("n", "q",     close, o)
+  vim.keymap.set("n", "<Esc>", close, o)
 end
 
 --- Load a file's diff into the side-by-side windows.
