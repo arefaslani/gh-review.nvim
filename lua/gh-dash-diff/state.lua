@@ -18,6 +18,7 @@ M.state = {
     pending_comments = {},   -- PendingComment[]
     threads = {},            -- GhThread[]
     comments_visible = true,
+    viewed_files = {},       -- set of filenames marked as viewed
   },
 
   -- Window/buffer handles
@@ -53,6 +54,7 @@ function M.reset()
       pending_comments = {},
       threads = {},
       comments_visible = true,
+      viewed_files = {},
     },
     layout = {
       tab = nil,

@@ -120,12 +120,17 @@ function M.open(state, config)
     -- Custom line format: active indicator + icon + short filename + diff stats
     format = function(item, _picker)
       local is_active = item.idx == state.pr.current_idx
+      local is_viewed = state.review.viewed_files[item.filename]
       local hl        = STATUS_HL[item.status] or "Normal"
       local stat_hl   = item.additions > 0 and "GhStatAdd" or "GhStatDel"
       local prefix    = is_active and "▶ " or "  "
       local name_hl   = is_active and "Special" or "Normal"
+      local viewed_chunk = is_viewed
+        and { "✔ ", "DiagnosticOk" }
+        or  { "  ", "Normal" }
       return {
         { prefix .. item.icon .. " ", is_active and "Special" or hl },
+        viewed_chunk,
         { item.display .. " ",        name_hl },
         { item.stats,                 stat_hl },
       }

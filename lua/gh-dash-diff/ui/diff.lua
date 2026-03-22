@@ -114,6 +114,29 @@ function M.set_keymaps(state, buf)
     require("gh-dash-diff.ui.comments").toggle(state)
   end, "Toggle comment visibility")
 
+  -- Toggle viewed
+  map(cfg.toggle_viewed, function()
+    local file = state.pr.files[state.pr.current_idx]
+    if not file then return end
+    local filename = file.filename
+    local viewed = state.review.viewed_files
+    if viewed[filename] then
+      viewed[filename] = nil
+      vim.notify("Unmarked as viewed: " .. filename)
+    else
+      viewed[filename] = true
+      vim.notify("Marked as viewed: " .. filename)
+    end
+    -- Refresh picker to update viewed indicators
+    pcall(require("gh-dash-diff.ui.picker").refresh, state)
+    -- Update winbar to reflect new reviewed status
+    local right_win = state.layout.right_win
+    if right_win and vim.api.nvim_win_is_valid(right_win) then
+      local reviewed_label = viewed[filename] and "  %#DiagnosticOk#✔ Reviewed%* " or ""
+      vim.wo[right_win].winbar = " " .. filename .. "  %=%#Comment#(head)%*" .. reviewed_label
+    end
+  end, "Toggle file viewed status")
+
   -- Review submission
   map(cfg.submit_review, function()
     require("gh-dash-diff.ui.input").open_review_dialog(state)
@@ -368,8 +391,9 @@ function M._apply_buffers(state, file, base_lines, head_lines, idx)
     vim.api.nvim_set_current_win(right_win)
     vim.cmd("diffthis")
     set_win_opts(right_win)
-    -- Winbar: current filename + (head)
-    vim.wo[right_win].winbar = " " .. head_filename .. "  %=%#Comment#(head)%* "
+    -- Winbar: current filename + (head) + optional reviewed indicator
+    local reviewed_label = state.review.viewed_files[head_filename] and "  %#DiagnosticOk#✔ Reviewed%* " or ""
+    vim.wo[right_win].winbar = " " .. head_filename .. "  %=%#Comment#(head)%*" .. reviewed_label
   end
 
   -- Set buffer-local keymaps on both diff buffers

@@ -39,6 +39,7 @@ M.defaults = {
     toggle_comments     = "<leader>ct",
 
     -- Review
+    toggle_viewed  = "<leader>cv",
     submit_review  = "<leader>rs",
 
     -- General
