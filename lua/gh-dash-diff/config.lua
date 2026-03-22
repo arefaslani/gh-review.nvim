@@ -31,11 +31,12 @@ M.defaults = {
     prev_comment   = "[x",
 
     -- Comments (set on diff buffers)
-    add_comment    = "<leader>cc",
-    add_suggestion = "<leader>cs",
-    reply_thread   = "<leader>cr",
-    delete_comment = "<leader>cd",
-    toggle_comments = "<leader>ct",
+    add_comment         = "<leader>cc",
+    add_single_comment  = "<leader>ca",
+    add_suggestion      = "<leader>cs",
+    reply_thread        = "<leader>cr",
+    delete_comment      = "<leader>cd",
+    toggle_comments     = "<leader>ct",
 
     -- Review
     submit_review  = "<leader>rs",

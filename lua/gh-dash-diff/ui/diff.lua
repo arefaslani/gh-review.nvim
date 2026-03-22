@@ -95,6 +95,10 @@ function M.set_keymaps(state, buf)
     require("gh-dash-diff.ui.input").open_comment(state)
   end, "Add inline comment")
 
+  map(cfg.add_single_comment, function()
+    require("gh-dash-diff.ui.input").open_single_comment(state)
+  end, "Post single comment immediately")
+
   map(cfg.reply_thread, function()
     require("gh-dash-diff.ui.input").reply_thread(state)
   end, "Reply to thread")
@@ -151,6 +155,7 @@ function M.show_help(state)
     "",
     "  Comments",
     string.format("  %-16s  Add inline comment (queued)", k(cfg.add_comment)),
+    string.format("  %-16s  Post single comment (immediate)", k(cfg.add_single_comment)),
     string.format("  %-16s  Reply to thread (immediate)", k(cfg.reply_thread)),
     string.format("  %-16s  Toggle comment visibility", k(cfg.toggle_comments)),
     "",

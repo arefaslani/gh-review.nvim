@@ -165,6 +165,55 @@ function M.open_comment(state)
   end)
 end
 
+--- Open a floating window for a new standalone inline comment posted immediately.
+--- Unlike open_comment, this posts directly to GitHub without going through a review.
+--- @param state GhDashDiffState
+function M.open_single_comment(state)
+  local file = state.pr.files[state.pr.current_idx]
+  if not file then
+    vim.notify("gh-dash-diff: No file selected", vim.log.levels.WARN)
+    return
+  end
+
+  local head_sha = state.pr.head_sha
+  if not head_sha then
+    vim.notify("gh-dash-diff: No commit SHA available", vim.log.levels.WARN)
+    return
+  end
+
+  -- Capture position before the float changes the current window
+  local side = get_side(state)
+  local line = vim.api.nvim_win_get_cursor(0)[1]
+  local path = comment_path(file, side)
+
+  open_input_float(" Post Comment (immediate) ", function(body)
+    local reviews = require("gh-dash-diff.gh.reviews")
+    local owner   = state.repo.owner
+    local repo    = state.repo.name
+
+    reviews.create_single_comment(owner, repo, state.pr.number, {
+      commit_sha = head_sha,
+      path       = path,
+      line       = line,
+      side       = side,
+      body       = body,
+    }, function(err, _)
+      if err then
+        vim.notify("gh-dash-diff: Comment failed: " .. err, vim.log.levels.ERROR)
+        return
+      end
+      vim.notify("gh-dash-diff: Comment posted", vim.log.levels.INFO)
+      -- Refresh threads and re-render comments for current file
+      reviews.fetch_threads(owner, repo, state.pr.number, function(_, threads)
+        if not threads then return end
+        state.review.threads = threads
+        local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+        if ok then pcall(cm.render_for_file, state, file.filename) end
+      end)
+    end)
+  end)
+end
+
 --- Open a floating window for replying to a review thread near the cursor.
 --- Replies are sent IMMEDIATELY to GitHub (not queued as pending).
 --- @param state GhDashDiffState

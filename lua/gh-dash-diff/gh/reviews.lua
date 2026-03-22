@@ -226,6 +226,37 @@ function M.create_review_with_comments(owner, repo, pr_number, opts, callback)
   end)
 end
 
+--- Post a single standalone PR review comment immediately (not part of a review).
+--- @param owner string
+--- @param repo string
+--- @param pr_number integer
+--- @param opts {commit_sha: string, path: string, line: integer, side: "LEFT"|"RIGHT", body: string, start_line?: integer, start_side?: "LEFT"|"RIGHT"}
+--- @param callback fun(err: string|nil, comment: GhComment|nil)
+function M.create_single_comment(owner, repo, pr_number, opts, callback)
+  local payload = {
+    body      = opts.body,
+    commit_id = opts.commit_sha,
+    path      = opts.path,
+    line      = opts.line,
+    side      = opts.side,
+  }
+  if opts.start_line then
+    payload.start_line = opts.start_line
+    payload.start_side = opts.start_side or opts.side
+  end
+  local json = vim.json.encode(payload)
+  exec.run({
+    "api",
+    string.format("repos/%s/%s/pulls/%d/comments", owner, repo, pr_number),
+    "-X", "POST",
+    "--input", "-",
+  }, { stdin = json }, function(err, stdout)
+    if err then callback(err, nil); return end
+    local ok, data = pcall(vim.json.decode, stdout)
+    if ok then callback(nil, data) else callback("JSON parse error", nil) end
+  end)
+end
+
 --- Reply to an existing comment thread.
 --- Replies are sent immediately (not queued as pending).
 --- @param owner string
