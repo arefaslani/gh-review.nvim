@@ -285,8 +285,9 @@ function M.reply_thread(state)
   end, make_restore(saved_win, saved_pos))
 end
 
---- Delete the pending comment nearest to the cursor on the current side.
---- Removes it from state.review.pending_comments and re-renders.
+--- Delete a pending comment, with a numbered selection dialog when multiple exist.
+--- If only one pending comment exists on the current file, deletes it directly.
+--- If multiple exist, shows a floating list so the user presses 1-9 to choose.
 --- @param state GhDashDiffState
 function M.delete_pending(state)
   local file = state.pr.files[state.pr.current_idx]
@@ -295,35 +296,97 @@ function M.delete_pending(state)
     return
   end
 
-  local side = get_side(state)
-  local line = vim.api.nvim_win_get_cursor(0)[1]
-  local path = comment_path(file, side)
-
-  -- Find the nearest pending comment within ±5 lines on this file+side
-  local best_idx, best_dist = nil, math.huge
+  -- Collect ALL pending comments for the current file (both sides)
+  local candidates = {}
   for i, pc in ipairs(state.review.pending_comments or {}) do
-    if pc.path == path and pc.side == side then
-      local dist = math.abs((pc.line or 0) - line)
-      if dist < best_dist then
-        best_idx, best_dist = i, dist
-      end
+    if pc.path == file.filename
+      or (file.previous_filename and pc.path == file.previous_filename) then
+      table.insert(candidates, { orig_idx = i, pc = pc })
     end
   end
 
-  if not best_idx or best_dist > 5 then
-    vim.notify("gh-dash-diff: No pending comment near cursor", vim.log.levels.WARN)
+  if #candidates == 0 then
+    vim.notify("gh-dash-diff: No pending comments on this file", vim.log.levels.WARN)
     return
   end
 
-  table.remove(state.review.pending_comments, best_idx)
-  vim.notify(
-    string.format("gh-dash-diff: Pending comment deleted (%d remaining)", #state.review.pending_comments),
-    vim.log.levels.INFO
-  )
+  local function do_delete(candidate)
+    -- Remove by original index; re-search by identity since indices may shift
+    for i, pc in ipairs(state.review.pending_comments) do
+      if pc == candidate.pc then
+        table.remove(state.review.pending_comments, i)
+        break
+      end
+    end
+    vim.notify(
+      string.format("gh-dash-diff: Pending comment deleted (%d remaining)", #state.review.pending_comments),
+      vim.log.levels.INFO
+    )
+    local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+    if ok then pcall(cm.render_for_file, state, file.filename) end
+  end
 
-  -- Re-render to clear the deleted comment's virt_lines
-  local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
-  if ok then pcall(cm.render_for_file, state, file.filename) end
+  -- Only one candidate — delete directly without a dialog
+  if #candidates == 1 then
+    do_delete(candidates[1])
+    return
+  end
+
+  -- Multiple candidates — show numbered selection dialog
+  local diff_win = vim.api.nvim_get_current_win()
+  local saved_pos = vim.api.nvim_win_get_cursor(diff_win)
+
+  local header = { "  Delete pending comment:", "" }
+  local lines = vim.deepcopy(header)
+  for i, c in ipairs(candidates) do
+    local preview = (c.pc.body or ""):gsub("\n", " ")
+    if #preview > 40 then preview = preview:sub(1, 40) .. "…" end
+    table.insert(lines, string.format("  %d.  line %-4d (%s)  %q", i, c.pc.line or 0, c.pc.side or "?", preview))
+  end
+  table.insert(lines, "")
+  table.insert(lines, "  Press 1-9 to delete  |  q/<Esc> to cancel")
+
+  local width  = math.min(72, math.max(50, vim.o.columns - 10))
+  local height = #lines
+  local row    = math.max(0, math.floor((vim.o.lines - height) / 2) - 1)
+  local col    = math.max(0, math.floor((vim.o.columns - width) / 2))
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_set_option_value("buftype",    "nofile", { buf = buf })
+  vim.api.nvim_set_option_value("bufhidden",  "wipe",   { buf = buf })
+  vim.api.nvim_set_option_value("modifiable", false,    { buf = buf })
+
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative  = "editor",
+    row       = row,
+    col       = col,
+    width     = width,
+    height    = height,
+    border    = "rounded",
+    style     = "minimal",
+    title     = " Delete Pending Comment ",
+    title_pos = "center",
+    zindex    = 60,
+  })
+
+  local function close_dialog()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+    vim.schedule(make_restore(diff_win, saved_pos))
+  end
+
+  local o = { buffer = buf, silent = true, nowait = true }
+  vim.keymap.set("n", "q",     close_dialog, o)
+  vim.keymap.set("n", "<Esc>", close_dialog, o)
+
+  for i = 1, math.min(#candidates, 9) do
+    vim.keymap.set("n", tostring(i), function()
+      close_dialog()
+      do_delete(candidates[i])
+    end, o)
+  end
 end
 
 --- Open the review submission dialog.
