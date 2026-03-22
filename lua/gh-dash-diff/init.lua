@@ -50,15 +50,19 @@ end
 function M.open_pr(pr_number)
   if not M._initialized then M.setup({}) end
 
+  if not pr_number then
+    vim.notify("gh-dash-diff: PR number required. Use :GhDashDiff <number>", vim.log.levels.WARN)
+    return
+  end
+
+  -- Show loading indicator before closing terminal (so user sees feedback immediately)
+  vim.notify("gh-dash-diff: Loading PR #" .. pr_number .. "…", vim.log.levels.INFO)
+  vim.cmd("redraw")
+
   -- Close gh-dash terminal if it's open
   if M._dash_buf and vim.api.nvim_buf_is_valid(M._dash_buf) then
     vim.api.nvim_buf_delete(M._dash_buf, { force = true })
     M._dash_buf = nil
-  end
-
-  if not pr_number then
-    vim.notify("gh-dash-diff: PR number required. Use :GhDashDiff <number>", vim.log.levels.WARN)
-    return
   end
 
   local State = require("gh-dash-diff.state").state
@@ -66,8 +70,6 @@ function M.open_pr(pr_number)
   local prs_mod = require("gh-dash-diff.gh.prs")
   local files_mod = require("gh-dash-diff.gh.files")
   local reviews_mod = require("gh-dash-diff.gh.reviews")
-
-  vim.notify("gh-dash-diff: Loading PR #" .. pr_number .. "…", vim.log.levels.INFO)
 
   repo_mod.detect(nil, function(err, owner, name)
     if err then vim.notify("gh-dash-diff: " .. err, vim.log.levels.ERROR); return end

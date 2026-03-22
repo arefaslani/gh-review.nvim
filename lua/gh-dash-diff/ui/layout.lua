@@ -13,8 +13,8 @@ function M.open(state, config)
   -- 2. The new tab has one window — use it as the left diff window
   state.layout.left_win = vim.api.nvim_get_current_win()
 
-  -- 3. Create right diff window via vsplit
-  vim.cmd("vsplit")
+  -- 3. Create right diff window via vsplit (rightbelow so it opens to the right)
+  vim.cmd("rightbelow vsplit")
   state.layout.right_win = vim.api.nvim_get_current_win()
 
   -- 4. Open the Snacks picker sidebar (creates its own split on the left)
