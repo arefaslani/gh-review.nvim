@@ -357,6 +357,10 @@ function M._apply_buffers(state, file, base_lines, head_lines, idx)
     vim.cmd("diffthis")
     set_win_opts(left_win)
     vim.api.nvim_win_set_hl_ns(left_win, 0)
+    -- Winbar: PR title + (base)
+    local pr_label = state.pr.number and ("PR #" .. state.pr.number) or "PR"
+    if state.pr.title then pr_label = pr_label .. ": " .. state.pr.title end
+    vim.wo[left_win].winbar = " " .. pr_label .. "  %=%#Comment#(base)%* "
   end
 
   if vim.api.nvim_win_is_valid(right_win) then
@@ -364,6 +368,8 @@ function M._apply_buffers(state, file, base_lines, head_lines, idx)
     vim.api.nvim_set_current_win(right_win)
     vim.cmd("diffthis")
     set_win_opts(right_win)
+    -- Winbar: current filename + (head)
+    vim.wo[right_win].winbar = " " .. head_filename .. "  %=%#Comment#(head)%* "
   end
 
   -- Set buffer-local keymaps on both diff buffers
