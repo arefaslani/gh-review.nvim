@@ -52,12 +52,22 @@ local function build_items(files)
   return items
 end
 
+--- Refresh the picker display so the active-file indicator re-renders.
+--- Safe to call even if the picker is closed or doesn't support refresh.
+--- @param state GhDashDiffState
+function M.refresh(state)
+  if state.layout.picker then
+    pcall(function() state.layout.picker:refresh() end)
+  end
+end
+
 --- Load the diff for a picker item. Used by confirm, on_change, and <CR>/<l>.
 --- @param state GhDashDiffState
 --- @param item table Snacks picker item
 local function load_item_diff(state, item)
   if not item then return end
   state.pr.current_idx = item.idx
+  M.refresh(state)
   require("gh-dash-diff.ui.diff").load_file(state, item._file_entry, item.idx)
 end
 
@@ -107,14 +117,17 @@ function M.open(state, config)
       width   = config.picker.width or 35,
     },
 
-    -- Custom line format: icon + short filename + diff stats
+    -- Custom line format: active indicator + icon + short filename + diff stats
     format = function(item, _picker)
-      local hl      = STATUS_HL[item.status] or "Normal"
-      local stat_hl = item.additions > 0 and "GhStatAdd" or "GhStatDel"
+      local is_active = item.idx == state.pr.current_idx
+      local hl        = STATUS_HL[item.status] or "Normal"
+      local stat_hl   = item.additions > 0 and "GhStatAdd" or "GhStatDel"
+      local prefix    = is_active and "▶ " or "  "
+      local name_hl   = is_active and "Special" or "Normal"
       return {
-        { " " .. item.icon .. " ", hl },
-        { item.display .. " ",     "Normal" },
-        { item.stats,              stat_hl },
+        { prefix .. item.icon .. " ", is_active and "Special" or hl },
+        { item.display .. " ",        name_hl },
+        { item.stats,                 stat_hl },
       }
     end,
 
@@ -169,6 +182,7 @@ end
 function M.select_by_index(state, idx)
   if state.layout.picker then
     pcall(function() state.layout.picker:set_cursor(idx) end)
+    M.refresh(state)
   end
 end
 
