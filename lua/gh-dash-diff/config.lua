@@ -34,6 +34,7 @@ M.defaults = {
     add_comment    = "<leader>cc",
     add_suggestion = "<leader>cs",
     reply_thread   = "<leader>cr",
+    delete_comment = "<leader>cd",
     toggle_comments = "<leader>ct",
 
     -- Review

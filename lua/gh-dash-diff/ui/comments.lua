@@ -296,6 +296,17 @@ function M.goto_prev(buf)
   end
 end
 
+--- Convenience wrapper: re-render pending comments for the current file.
+--- Called by ui/input.lua after a pending comment is added or removed.
+--- @param state GhDashDiffState
+function M.update_pending(state)
+  local files = state.pr.files
+  local idx = state.pr.current_idx
+  if idx >= 1 and idx <= #files then
+    M.render_for_file(state, files[idx].filename)
+  end
+end
+
 --- Toggle comment virt_lines visibility.
 --- Clears or re-renders all comment namespaces for the current file.
 --- @param state GhDashDiffState

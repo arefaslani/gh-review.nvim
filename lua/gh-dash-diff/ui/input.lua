@@ -215,6 +215,47 @@ function M.reply_thread(state)
   end)
 end
 
+--- Delete the pending comment nearest to the cursor on the current side.
+--- Removes it from state.review.pending_comments and re-renders.
+--- @param state GhDashDiffState
+function M.delete_pending(state)
+  local file = state.pr.files[state.pr.current_idx]
+  if not file then
+    vim.notify("gh-dash-diff: No file selected", vim.log.levels.WARN)
+    return
+  end
+
+  local side = get_side(state)
+  local line = vim.api.nvim_win_get_cursor(0)[1]
+  local path = comment_path(file, side)
+
+  -- Find the nearest pending comment within ±5 lines on this file+side
+  local best_idx, best_dist = nil, math.huge
+  for i, pc in ipairs(state.review.pending_comments or {}) do
+    if pc.path == path and pc.side == side then
+      local dist = math.abs((pc.line or 0) - line)
+      if dist < best_dist then
+        best_idx, best_dist = i, dist
+      end
+    end
+  end
+
+  if not best_idx or best_dist > 5 then
+    vim.notify("gh-dash-diff: No pending comment near cursor", vim.log.levels.WARN)
+    return
+  end
+
+  table.remove(state.review.pending_comments, best_idx)
+  vim.notify(
+    string.format("gh-dash-diff: Pending comment deleted (%d remaining)", #state.review.pending_comments),
+    vim.log.levels.INFO
+  )
+
+  -- Re-render to clear the deleted comment's virt_lines
+  local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+  if ok then pcall(cm.render_for_file, state, file.filename) end
+end
+
 --- Open the review submission dialog.
 --- Shows pending comment count and event options; on confirm calls
 --- `create_review_with_comments()` with all queued comments in a single API call.
