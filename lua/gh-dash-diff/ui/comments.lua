@@ -43,8 +43,9 @@ end
 --- Build virt_lines for a single comment.
 --- @param comment GhComment
 --- @param is_resolved boolean
+--- @param is_reply boolean  true for reply comments (indented with ↳)
 --- @return table[] list of virt_line rows (each is a list of {text, hl} chunks)
-local function comment_virt_lines(comment, is_resolved)
+local function comment_virt_lines(comment, is_resolved, is_reply)
   local body_hl = is_resolved and "GhCommentResolved" or "GhCommentBody"
   local author_hl = is_resolved and "GhCommentResolved" or "GhCommentAuthor"
   local date_hl = "GhCommentDate"
@@ -54,15 +55,23 @@ local function comment_virt_lines(comment, is_resolved)
   -- Author + date header
   local login = (comment.user and comment.user.login) or "unknown"
   local date_str = relative_time(comment.created_at)
-  table.insert(lines, {
-    { "  @" .. login, author_hl },
-    { "  " .. date_str, date_hl },
-  })
+  if is_reply then
+    table.insert(lines, {
+      { "    ↳ @" .. login, author_hl },
+      { "  " .. date_str, date_hl },
+    })
+  else
+    table.insert(lines, {
+      { "  @" .. login, author_hl },
+      { "  " .. date_str, date_hl },
+    })
+  end
 
   -- Body lines
   local body = comment.body or ""
+  local body_indent = is_reply and "      " or "  "
   for _, line in ipairs(vim.split(body, "\n", { plain = true })) do
-    table.insert(lines, { { "  " .. line, body_hl } })
+    table.insert(lines, { { body_indent .. line, body_hl } })
   end
 
   return lines
@@ -110,7 +119,7 @@ local function render_thread(buf, thread, ns_comments, ns_signs, ns_eol)
     if i > 1 then
       table.insert(virt_lines, { { "", "Normal" } })
     end
-    for _, vline in ipairs(comment_virt_lines(comment, is_resolved)) do
+    for _, vline in ipairs(comment_virt_lines(comment, is_resolved, i > 1)) do
       table.insert(virt_lines, vline)
     end
   end
