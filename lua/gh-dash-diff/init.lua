@@ -142,6 +142,8 @@ function M.open_dash()
 
       require("gh-dash-diff.ui.pr_picker").open(prs, {
         title = string.format("PRs — %s/%s", owner, name),
+        owner = owner,
+        repo  = name,
       })
     end)
   end)

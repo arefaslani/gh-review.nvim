@@ -43,7 +43,7 @@ end
 
 --- Open a Snacks picker to browse PRs.
 --- @param prs table[] List of PRs from gh/prs.lua
---- @param opts? {title?: string}
+--- @param opts? {title?: string, owner?: string, repo?: string}
 function M.open(prs, opts)
   opts = opts or {}
   local ok, Snacks = pcall(require, "snacks")
@@ -52,13 +52,58 @@ function M.open(prs, opts)
     return
   end
 
+  local owner = opts.owner
+  local repo  = opts.repo
+  local prs_mod = require("gh-dash-diff.gh.prs")
+
   local items = build_items(prs)
   local picker_ref = nil
+  local debounce_timer = nil
+
+  local function get_title(filter_label)
+    local base = opts.title or "GitHub PRs"
+    if filter_label and filter_label ~= "" then
+      return base .. "  [" .. filter_label .. "]"
+    end
+    return base
+  end
+
+  --- Close the current picker, re-fetch with a search query, and reopen.
+  local function reopen_with_search(search_query, filter_label)
+    if picker_ref then picker_ref:close() end
+    if not (owner and repo) then
+      vim.notify("gh-dash-diff: owner/repo not available for search", vim.log.levels.WARN)
+      return
+    end
+    prs_mod.list(owner, repo, { search = search_query }, function(err2, new_prs)
+      if err2 then
+        vim.notify("gh-dash-diff: search error: " .. err2, vim.log.levels.ERROR)
+        return
+      end
+      M.open(new_prs or {}, vim.tbl_extend("force", opts, {
+        title = get_title(filter_label or search_query),
+      }))
+    end)
+  end
+
+  -- Cached contributor logins for the current repo, populated asynchronously.
+  local contributor_logins = {}
+  if owner and repo then
+    prs_mod.list_contributors(owner, repo, function(err, logins)
+      if not err and logins then contributor_logins = logins end
+    end)
+  end
+
+  local function build_hint_line()
+    local first = contributor_logins[1]
+    local author_hint = first and ("author:" .. first) or "author:@me"
+    return "Tip: " .. author_hint .. "  is:open  is:closed  review-requested:@me"
+  end
 
   local function do_open(picker_items)
     picker_ref = Snacks.picker.pick({
       source    = "gh_prs",
-      title     = opts.title or "GitHub PRs",
+      title     = get_title(),
       items     = picker_items,
 
       layout = {
@@ -104,6 +149,9 @@ function M.open(prs, opts)
         else
           table.insert(lines, "_No description provided._")
         end
+        table.insert(lines, "")
+        table.insert(lines, "---")
+        table.insert(lines, build_hint_line())
         ctx.preview:set_lines(lines)
         ctx.preview:highlight({ ft = "markdown" })
       end,
@@ -119,21 +167,83 @@ function M.open(prs, opts)
           _picker:close()
           require("gh-dash-diff").open_dash()
         end,
+        filter_author_me = function(_picker)
+          reopen_with_search("author:@me", "author:@me")
+        end,
+        filter_open = function(_picker)
+          reopen_with_search("is:open", "is:open")
+        end,
+        filter_closed = function(_picker)
+          reopen_with_search("is:closed", "is:closed")
+        end,
+        filter_review_requested = function(_picker)
+          reopen_with_search("review-requested:@me", "review-requested:@me")
+        end,
+        gh_search = function(_picker)
+          -- Manually trigger a GitHub search using the current input text.
+          local query = ""
+          if _picker.input and _picker.input.filter then
+            query = _picker.input.filter.text or ""
+          end
+          if query:find(":") and owner and repo then
+            reopen_with_search(query, query)
+          end
+        end,
       },
 
       win = {
         input = {
           keys = {
             ["<C-r>"] = "refresh_prs",
+            ["<C-a>"] = "filter_author_me",
+            ["<C-o>"] = "filter_open",
+            ["<C-x>"] = "filter_closed",
+            ["<C-m>"] = "filter_review_requested",
+            ["<C-g>"] = "gh_search",
           },
         },
         list = {
           keys = {
             ["<C-r>"] = "refresh_prs",
+            ["<C-a>"] = "filter_author_me",
+            ["<C-o>"] = "filter_open",
+            ["<C-x>"] = "filter_closed",
+            ["<C-m>"] = "filter_review_requested",
           },
         },
       },
     })
+
+    -- Set up debounced input watcher so GitHub search qualifiers trigger a re-fetch.
+    if owner and repo then
+      vim.defer_fn(function()
+        if not picker_ref then return end
+        local input_buf = picker_ref.input and picker_ref.input.buf
+        if not input_buf or not vim.api.nvim_buf_is_valid(input_buf) then return end
+
+        local last_query = ""
+        vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
+          buffer = input_buf,
+          callback = function()
+            if not picker_ref then return end
+            local query = vim.api.nvim_buf_get_lines(input_buf, 0, -1, false)[1] or ""
+            if query == last_query or not query:find(":") then return end
+            last_query = query
+
+            if debounce_timer then
+              debounce_timer:stop()
+              debounce_timer:close()
+            end
+            debounce_timer = vim.uv.new_timer()
+            debounce_timer:start(500, 0, vim.schedule_wrap(function()
+              if debounce_timer then debounce_timer:close(); debounce_timer = nil end
+              if not picker_ref then return end
+              reopen_with_search(query, query)
+            end))
+          end,
+        })
+      end, 100)
+    end
   end
 
   do_open(items)

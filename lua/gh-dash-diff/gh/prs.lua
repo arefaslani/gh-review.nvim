@@ -1,6 +1,9 @@
 local M = {}
 local exec = require("gh-dash-diff.gh.exec")
 
+--- Module-level contributors cache keyed by "owner/repo".
+local _contributors_cache = {}
+
 local PR_FIELDS = table.concat({
   "number", "title", "body", "state", "url",
   "author", "headRefName", "baseRefName", "headRefOid", "baseRefOid",
@@ -12,7 +15,7 @@ local PR_FIELDS = table.concat({
 --- List PRs for a repository.
 --- @param owner string
 --- @param repo string
---- @param opts? {state?: "open"|"closed"|"all", limit?: integer, author?: string}
+--- @param opts? {state?: "open"|"closed"|"all", limit?: integer, author?: string, search?: string}
 --- @param callback fun(err: string|nil, prs: GhPR[]|nil)
 function M.list(owner, repo, opts, callback)
   opts = opts or {}
@@ -27,7 +30,39 @@ function M.list(owner, repo, opts, callback)
     table.insert(args, "--author")
     table.insert(args, opts.author)
   end
+  if opts.search then
+    table.insert(args, "--search")
+    table.insert(args, opts.search)
+  end
   exec.run_json(args, nil, callback)
+end
+
+--- List contributor logins for a repository. Results are cached per repo.
+--- @param owner string
+--- @param repo string
+--- @param callback fun(err: string|nil, logins: string[]|nil)
+function M.list_contributors(owner, repo, callback)
+  local key = owner .. "/" .. repo
+  if _contributors_cache[key] then
+    callback(nil, _contributors_cache[key])
+    return
+  end
+  exec.run(
+    { "api", "repos/" .. owner .. "/" .. repo .. "/contributors", "--jq", ".[].login" },
+    nil,
+    function(err, stdout)
+      if err then callback(err, nil); return end
+      local logins = {}
+      for _, line in ipairs(vim.split(vim.trim(stdout or ""), "\n", { plain = true })) do
+        local login = vim.trim(line)
+        if login ~= "" then
+          table.insert(logins, login)
+        end
+      end
+      _contributors_cache[key] = logins
+      callback(nil, logins)
+    end
+  )
 end
 
 --- Get a single PR by number.
