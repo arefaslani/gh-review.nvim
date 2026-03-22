@@ -58,7 +58,6 @@ function M.open(prs, opts)
 
   local items = build_items(prs)
   local picker_ref = nil
-  local debounce_timer = nil
 
   local function get_title(filter_label)
     local base = opts.title or "GitHub PRs"
@@ -179,70 +178,59 @@ function M.open(prs, opts)
         filter_review_requested = function(_picker)
           reopen_with_search("review-requested:@me", "review-requested:@me")
         end,
-        gh_search = function(_picker)
-          -- Manually trigger a GitHub search using the current input text.
-          local query = ""
-          if _picker.input and _picker.input.filter then
-            query = _picker.input.filter.text or ""
-          end
-          if query:find(":") and owner and repo then
-            reopen_with_search(query, query)
-          end
-        end,
-      },
-
-      win = {
-        input = {
-          keys = {
-            ["<C-r>"] = "refresh_prs",
-            ["<C-a>"] = "filter_author_me",
-            ["<C-o>"] = "filter_open",
-            ["<C-x>"] = "filter_closed",
-            ["<C-n>"] = "filter_review_requested",
-            ["<C-g>"] = "gh_search",
-          },
-        },
-        list = {
-          keys = {
-            ["<C-r>"] = "refresh_prs",
-            ["<C-a>"] = "filter_author_me",
-            ["<C-o>"] = "filter_open",
-            ["<C-x>"] = "filter_closed",
-            ["<C-n>"] = "filter_review_requested",
-          },
-        },
       },
     })
 
-    -- Set up debounced input watcher so GitHub search qualifiers trigger a re-fetch.
-    if owner and repo then
-      vim.defer_fn(function()
-        if not picker_ref then return end
-        local input_buf = picker_ref.input and picker_ref.input.buf
-        if not input_buf or not vim.api.nvim_buf_is_valid(input_buf) then return end
+    -- Bypass Snacks win.input.keys / win.list.keys (unreliable for custom actions).
+    -- Set raw vim keymaps on picker buffers — same pattern as ui/picker.lua.
+    if picker_ref then
+      local function get_input_query()
+        local input_win = picker_ref.layout and picker_ref.layout.wins and picker_ref.layout.wins.input
+        if input_win and input_win:valid() then
+          return vim.api.nvim_buf_get_lines(input_win.buf, 0, -1, false)[1] or ""
+        end
+        if picker_ref.input and picker_ref.input.buf
+          and vim.api.nvim_buf_is_valid(picker_ref.input.buf) then
+          return vim.api.nvim_buf_get_lines(picker_ref.input.buf, 0, -1, false)[1] or ""
+        end
+        return ""
+      end
 
-        local last_query = ""
-        vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
-          buffer = input_buf,
-          callback = function()
-            if not picker_ref then return end
-            local query = vim.api.nvim_buf_get_lines(input_buf, 0, -1, false)[1] or ""
-            if query == last_query or not query:find(":") then return end
-            last_query = query
+      local function set_filter_keys(buf)
+        local o = { buffer = buf, silent = true }
+        vim.keymap.set({ "n", "i" }, "<C-r>", function()
+          if picker_ref then picker_ref:close() end
+          require("gh-dash-diff").open_dash()
+        end, o)
+        vim.keymap.set({ "n", "i" }, "<C-a>", function()
+          reopen_with_search("author:@me", "author:@me")
+        end, o)
+        vim.keymap.set({ "n", "i" }, "<C-o>", function()
+          reopen_with_search("is:open", "is:open")
+        end, o)
+        vim.keymap.set({ "n", "i" }, "<C-x>", function()
+          reopen_with_search("is:closed", "is:closed")
+        end, o)
+        vim.keymap.set({ "n", "i" }, "<C-n>", function()
+          reopen_with_search("review-requested:@me", "review-requested:@me")
+        end, o)
+        vim.keymap.set({ "n", "i" }, "<C-g>", function()
+          local query = get_input_query()
+          if query:find(":") then
+            reopen_with_search(query, query)
+          end
+        end, o)
+      end
 
-            if debounce_timer then
-              debounce_timer:stop()
-              debounce_timer:close()
-            end
-            debounce_timer = vim.uv.new_timer()
-            debounce_timer:start(500, 0, vim.schedule_wrap(function()
-              if debounce_timer then debounce_timer:close(); debounce_timer = nil end
-              if not picker_ref then return end
-              reopen_with_search(query, query)
-            end))
-          end,
-        })
-      end, 100)
+      local list_win = picker_ref.layout and picker_ref.layout.wins and picker_ref.layout.wins.list
+      if list_win and list_win:valid() then
+        set_filter_keys(list_win.buf)
+      end
+
+      local input_win = picker_ref.layout and picker_ref.layout.wins and picker_ref.layout.wins.input
+      if input_win and input_win:valid() then
+        set_filter_keys(input_win.buf)
+      end
     end
   end
 
