@@ -67,6 +67,8 @@ function M.open_pr(pr_number)
   local files_mod = require("gh-dash-diff.gh.files")
   local reviews_mod = require("gh-dash-diff.gh.reviews")
 
+  vim.notify("gh-dash-diff: Loading PR #" .. pr_number .. "…", vim.log.levels.INFO)
+
   repo_mod.detect(nil, function(err, owner, name)
     if err then vim.notify("gh-dash-diff: " .. err, vim.log.levels.ERROR); return end
     State.repo.owner = owner
@@ -121,6 +123,8 @@ function M.open_dash()
     vim.notify("gh-dash-diff: No Neovim server address. Start Neovim with --listen or ensure it has a server.", vim.log.levels.ERROR)
     return
   end
+
+  vim.notify("gh-dash-diff: Loading gh-dash…", vim.log.levels.INFO)
 
   local buf = vim.api.nvim_create_buf(false, true)
   M._dash_buf = buf
