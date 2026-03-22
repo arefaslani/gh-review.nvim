@@ -58,6 +58,7 @@ function M.open(prs, opts)
 
   local items = build_items(prs)
   local picker_ref = nil
+  local active_filter = opts._active_filter or nil  -- track current filter for toggling
 
   local function get_title(filter_label)
     local base = opts.title or "GitHub PRs"
@@ -68,12 +69,29 @@ function M.open(prs, opts)
   end
 
   --- Close the current picker, re-fetch with a search query, and reopen.
+  --- If the same filter is already active, clear it instead (toggle behavior).
   local function reopen_with_search(search_query, filter_label)
     if picker_ref then picker_ref:close() end
     if not (owner and repo) then
       vim.notify("gh-dash-diff: owner/repo not available for search", vim.log.levels.WARN)
       return
     end
+
+    -- Toggle: if same filter is active, clear it
+    if active_filter == search_query then
+      prs_mod.list(owner, repo, nil, function(err2, new_prs)
+        if err2 then
+          vim.notify("gh-dash-diff: " .. err2, vim.log.levels.ERROR)
+          return
+        end
+        M.open(new_prs or {}, vim.tbl_extend("force", opts, {
+          title = opts.title or "GitHub PRs",
+          _active_filter = nil,
+        }))
+      end)
+      return
+    end
+
     prs_mod.list(owner, repo, { search = search_query }, function(err2, new_prs)
       if err2 then
         vim.notify("gh-dash-diff: search error: " .. err2, vim.log.levels.ERROR)
@@ -81,6 +99,7 @@ function M.open(prs, opts)
       end
       M.open(new_prs or {}, vim.tbl_extend("force", opts, {
         title = get_title(filter_label or search_query),
+        _active_filter = search_query,
       }))
     end)
   end
