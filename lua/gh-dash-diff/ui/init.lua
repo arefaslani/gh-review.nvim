@@ -4,7 +4,10 @@ local M = {}
 --- Creates the tab layout, opens the Snacks picker sidebar, and loads the first file diff.
 --- @param pr GhPR
 --- @param files GhFile[]
-function M.open(pr, files)
+--- @param opts? {start_idx?: integer, start_line?: integer}
+function M.open(pr, files, opts)
+  opts = opts or {}
+
   -- Validate snacks is available
   local ok, _ = pcall(require, "snacks")
   if not ok then
@@ -17,10 +20,13 @@ function M.open(pr, files)
   local config = require("gh-dash-diff").config
 
   -- Sync PR data into state (may already be set by init.lua, but ensure consistency)
+  local start_idx = opts.start_idx or 1
+  if start_idx < 1 or start_idx > #files then start_idx = 1 end
+
   state.pr.number = pr.number
   state.pr.title = pr.title
   state.pr.files = files
-  state.pr.current_idx = #files > 0 and 1 or 0
+  state.pr.current_idx = #files > 0 and start_idx or 0
 
   -- Create the tab + windows + picker
   require("gh-dash-diff.ui.layout").open(state, config)
@@ -28,9 +34,13 @@ function M.open(pr, files)
   -- Mark layout as ready (enables WinClosed guard)
   state.layout.ready = true
 
-  -- Load the first file immediately if there are any files
+  -- Load the starting file
   if #files > 0 then
-    require("gh-dash-diff.ui.diff").load_file(state, files[1], 1)
+    local start_line = opts.start_line
+    require("gh-dash-diff.ui.diff").load_file(
+      state, files[start_idx], start_idx,
+      { restore_line = start_line }
+    )
   else
     vim.notify("gh-dash-diff: PR #" .. pr.number .. " has no changed files", vim.log.levels.INFO)
   end

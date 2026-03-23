@@ -33,6 +33,12 @@ end
 --- @param files GhFile[]
 --- @return table[] items, table file_idx_to_picker_idx
 local function build_file_items(files)
+  -- Map filename → original index in the files array
+  local orig_idx_map = {}
+  for i, f in ipairs(files) do
+    orig_idx_map[f.filename] = i
+  end
+
   -- Sort a copy by filename so directories are naturally grouped
   local sorted = {}
   for _, f in ipairs(files) do
@@ -44,22 +50,23 @@ local function build_file_items(files)
   local file_idx_to_picker_idx = {}
   local current_dir = nil
 
-  for i, f in ipairs(sorted) do
+  for _, f in ipairs(sorted) do
     local dir = f.filename:match("^(.*)/[^/]+$")  -- nil for root-level files
 
     if dir ~= current_dir then
       current_dir = dir
       if dir then
-        table.insert(items, { type = "dir_header", text = dir, display = dir, idx = 0 })
+        table.insert(items, { type = "dir_header", text = dir, display = dir, file_idx = 0 })
       end
     end
 
-    file_idx_to_picker_idx[i] = #items + 1
+    local orig_idx = orig_idx_map[f.filename]
+    file_idx_to_picker_idx[orig_idx] = #items + 1
 
     local icon  = STATUS_ICONS[f.status] or "?"
     local stats = string.format("+%d -%d", f.additions or 0, f.deletions or 0)
     table.insert(items, {
-      idx         = i,
+      file_idx    = orig_idx,
       type        = "file",
       text        = f.filename,      -- used for fuzzy filtering
       file        = f.filename,
@@ -86,7 +93,7 @@ local function build_commit_items(commits)
     local short_sha = c.sha:sub(1, 7)
     local first_line = c.message:match("^[^\n]*") or c.message
     table.insert(items, {
-      idx           = i,
+      commit_idx    = i,
       type          = "commit",
       text          = short_sha .. " " .. first_line,  -- fuzzy filter text
       sha           = c.sha,
@@ -116,7 +123,7 @@ local function load_item_diff(state, item)
 
   if item.type == "commit" then
     -- Commit mode: fetch files for this commit then show first file
-    state.pr.current_commit_idx = item.idx
+    state.pr.current_commit_idx = item.commit_idx
     M.refresh(state)
     local commits_mod = require("gh-dash-diff.gh.commits")
     commits_mod.get_files(state.repo.owner, state.repo.name, item.sha, function(err, files)
@@ -137,9 +144,9 @@ local function load_item_diff(state, item)
     end)
   else
     -- Files mode: existing behavior
-    state.pr.current_idx = item.idx
+    state.pr.current_idx = item.file_idx
     M.refresh(state)
-    require("gh-dash-diff.ui.diff").load_file(state, item._file_entry, item.idx)
+    require("gh-dash-diff.ui.diff").load_file(state, item._file_entry, item.file_idx)
   end
 end
 
@@ -233,7 +240,7 @@ function M.open(state, config)
           { item.display .. "/", "Comment" },
         }
       elseif item.type == "commit" then
-        local is_active = item.idx == state.pr.current_commit_idx
+        local is_active = item.commit_idx == state.pr.current_commit_idx
         local prefix    = is_active and "▶ " or "  "
         local name_hl   = is_active and "Special" or "Normal"
         return {
@@ -242,7 +249,7 @@ function M.open(state, config)
           { item.display,       name_hl },
         }
       else
-        local is_active = item.idx == state.pr.current_idx
+        local is_active = item.file_idx == state.pr.current_idx
         local is_viewed = state.review.viewed_files[item.filename]
         local hl        = STATUS_HL[item.status] or "Normal"
         local stat_hl   = item.additions > 0 and "GhStatAdd" or "GhStatDel"
@@ -270,22 +277,26 @@ function M.open(state, config)
       input = {
         keys = {
           ["q"] = "close_review",
-          ["<BS>"] = "back_to_commits",
         },
       },
       list = {
         keys = {
           ["q"] = "close_review",
-          ["<BS>"] = "back_to_commits",
         },
       },
     },
   })
 
-  -- Bypass Snacks action system entirely for <CR>/<o>/<l>:
-  -- Set raw vim keymaps on the picker's list and input windows.
+  -- Ensure picker windows don't inherit scrollbind/cursorbind from diff windows
   local picker = state.layout.picker
   if picker then
+    for _, wname in ipairs({ "list", "input", "preview" }) do
+      local w = picker.layout and picker.layout.wins and picker.layout.wins[wname]
+      if w and w:valid() then
+        vim.wo[w.win].scrollbind = false
+        vim.wo[w.win].cursorbind = false
+      end
+    end
     local function open_current()
       load_item_diff(state, picker:current())
     end
@@ -318,14 +329,28 @@ function M.open(state, config)
           local item = picker:current()
           if item and item.type == "file" and item.filename then
             local viewed = state.review.viewed_files
+            local now_viewed
             if viewed[item.filename] then
               viewed[item.filename] = nil
+              now_viewed = false
               vim.notify("Unmarked: " .. item.filename)
             else
               viewed[item.filename] = true
+              now_viewed = true
               vim.notify("Viewed: " .. item.filename)
             end
             M.refresh(state)
+            -- Persist to GitHub API in background
+            local node_id = state.pr.node_id
+            if node_id then
+              local files_mod = require("gh-dash-diff.gh.files")
+              local api_fn = now_viewed and files_mod.mark_file_as_viewed or files_mod.unmark_file_as_viewed
+              api_fn(node_id, item.filename, function(err)
+                if err then
+                  vim.notify("gh-dash-diff: Failed to persist viewed state: " .. err, vim.log.levels.WARN)
+                end
+              end)
+            end
           end
         end, { buffer = list_win.buf, silent = true })
       end
@@ -336,7 +361,11 @@ function M.open(state, config)
     if input_win and input_win:valid() then
       local buf = input_win.buf
       vim.keymap.set({ "n", "i" }, "<CR>", open_current, { buffer = buf, silent = true })
-      vim.keymap.set({ "n", "i" }, "<BS>", go_back, { buffer = buf, silent = true })
+      vim.keymap.set("n", "<Esc>", function()
+        if list_win and list_win:valid() then
+          vim.api.nvim_set_current_win(list_win.win)
+        end
+      end, { buffer = buf, silent = true })
       if cfg.toggle_explorer then
         vim.keymap.set("n", cfg.toggle_explorer, function()
           M.toggle(state)

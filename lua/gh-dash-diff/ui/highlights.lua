@@ -12,12 +12,15 @@ local highlights = {
   GhStatDel         = { fg = "#c04040",               default = true },
 
   -- Comment virtual lines
-  GhCommentSeparator = { link = "Comment",            default = true },
-  GhCommentAuthor   = { link = "Special", bold = true, default = true },
-  GhCommentDate     = { link = "Comment",             default = true },
-  GhCommentBody     = { link = "Normal",              default = true },
-  GhCommentResolved = { link = "Comment", italic = true, default = true },
-  GhCommentCount    = { link = "Comment",             default = true },
+  GhCommentSeparator  = { link = "Comment",            default = true },
+  GhCommentAuthor     = { link = "Special", bold = true, default = true },
+  GhCommentDate       = { link = "Comment",             default = true },
+  GhCommentBody       = { link = "Normal",              default = true },
+  GhCommentResolved   = { link = "Comment", italic = true, default = true },
+  GhCommentCount      = { link = "Comment",             default = true },
+  GhCommentCode       = { link = "Special",             default = true },
+  GhCommentBold       = { bold = true,                  default = true },
+  GhCommentSuggestion = { link = "DiffAdd",             default = true },
 
   -- Comment input floating window
   GhCommentInput    = { link = "NormalFloat",         default = true },

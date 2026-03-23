@@ -1,6 +1,9 @@
 local M = {}
 local exec = require("gh-dash-diff.gh.exec")
 
+-- Cache for the authenticated user login
+local _auth_user_login = nil
+
 -- ---------------------------------------------------------------------------
 -- GraphQL queries
 -- ---------------------------------------------------------------------------
@@ -296,6 +299,41 @@ function M.resolve_thread(thread_id, callback)
       end
     end
   )
+end
+
+--- Get the login of the currently authenticated GitHub user (cached).
+--- @param callback fun(err: string|nil, login: string|nil)
+function M.get_authenticated_user(callback)
+  if _auth_user_login then
+    callback(nil, _auth_user_login)
+    return
+  end
+  exec.run_json({ "api", "user" }, nil, function(err, data)
+    if err then callback(err, nil); return end
+    local login = data and data.login
+    if not login then
+      callback("Could not determine authenticated user", nil)
+      return
+    end
+    _auth_user_login = login
+    callback(nil, login)
+  end)
+end
+
+--- Delete a posted inline PR review comment.
+--- @param owner string
+--- @param repo string
+--- @param pr_number integer  (unused in URL but kept for API consistency)
+--- @param comment_id integer Database ID of the comment
+--- @param callback fun(err: string|nil)
+function M.delete_comment(owner, repo, pr_number, comment_id, callback)
+  exec.run({
+    "api",
+    string.format("repos/%s/%s/pulls/comments/%d", owner, repo, comment_id),
+    "-X", "DELETE",
+  }, nil, function(err, _)
+    callback(err)
+  end)
 end
 
 --- Unresolve a review thread.

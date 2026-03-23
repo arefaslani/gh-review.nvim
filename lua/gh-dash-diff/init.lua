@@ -1,5 +1,6 @@
 local M = {}
 M._initialized = false
+M._resume = nil  -- saved state for resuming a PR review
 
 function M.setup(opts)
   local config = require("gh-dash-diff.config")
@@ -46,8 +47,9 @@ function M.setup(opts)
   M._initialized = true
 end
 
-function M.open_pr(pr_number)
+function M.open_pr(pr_number, open_opts)
   if not M._initialized then M.setup({}) end
+  open_opts = open_opts or {}
 
   if not pr_number then
     vim.notify("gh-dash-diff: PR number required. Use :GhDashDiff <number>", vim.log.levels.WARN)
@@ -97,7 +99,22 @@ function M.open_pr(pr_number)
           end
 
           -- Open the review layout: Snacks sidebar + diff windows
-          require("gh-dash-diff.ui").open(pr, files)
+          require("gh-dash-diff.ui").open(pr, files, {
+            start_idx = open_opts.start_idx,
+            start_line = open_opts.start_line,
+          })
+
+          -- Fetch viewed states in background and populate local state
+          files_mod.fetch_viewed_states(owner, name, pr_number, function(vs_err, result)
+            if vs_err then
+              vim.notify("gh-dash-diff: Could not fetch viewed states: " .. vs_err, vim.log.levels.WARN)
+            elseif result then
+              State.pr.node_id = result.pr_node_id
+              State.review.viewed_files = result.viewed_files
+              -- Refresh picker to reflect restored viewed indicators
+              pcall(require("gh-dash-diff.ui.picker").refresh, State)
+            end
+          end)
 
           -- Fetch comments in background
           reviews_mod.fetch_threads(owner, name, pr_number, function(_, threads)
@@ -120,8 +137,64 @@ end
 
 function M.close()
   local state = require("gh-dash-diff.state").state
+  -- Guard: nothing to close if no layout tab exists
+  if not state.layout.tab then return end
   require("gh-dash-diff.ui.layout").close(state)
   require("gh-dash-diff.state").reset()
+end
+
+--- Jump from diff mode to editing the actual file at the cursor line.
+--- Saves resume state so the review can be reopened later.
+--- @param state table GhDashDiffState
+function M.edit_file(state)
+  local cur_win = vim.api.nvim_get_current_win()
+  local line = vim.api.nvim_win_get_cursor(cur_win)[1]
+  local file = state.pr.files[state.pr.current_idx]
+  if not file then return end
+
+  local root = state.repo.root
+  if not root then
+    vim.notify("gh-dash-diff: git root not available", vim.log.levels.WARN)
+    return
+  end
+
+  local filepath = root .. "/" .. file.filename
+
+  -- Deleted files don't exist on disk
+  if file.status == "removed" then
+    vim.notify("gh-dash-diff: " .. file.filename .. " was deleted in this PR", vim.log.levels.WARN)
+    return
+  end
+
+  -- Save resume info before closing (survives state.reset)
+  M._resume = {
+    pr_number = state.pr.number,
+    file_idx  = state.pr.current_idx,
+    line      = line,
+  }
+
+  -- Close the review
+  M.close()
+
+  -- Schedule the edit so the tab close fully settles first
+  vim.schedule(function()
+    vim.cmd("edit " .. vim.fn.fnameescape(filepath))
+    pcall(vim.api.nvim_win_set_cursor, 0, { line, 0 })
+    vim.notify("gh-dash-diff: Editing " .. file.filename .. " — use <leader>ppr to resume review", vim.log.levels.INFO)
+  end)
+end
+
+--- Resume a previously suspended PR review.
+function M.resume_pr()
+  if not M._resume then
+    vim.notify("gh-dash-diff: No PR review to resume", vim.log.levels.WARN)
+    return
+  end
+  local pr_number = M._resume.pr_number
+  local file_idx  = M._resume.file_idx
+  local line      = M._resume.line
+  M._resume = nil
+  M.open_pr(pr_number, { start_idx = file_idx, start_line = line })
 end
 
 --- Open a Snacks picker to browse and select PRs for the current repo.

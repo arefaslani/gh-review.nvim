@@ -7,6 +7,7 @@ M.state = {
   -- Current PR session
   pr = {
     number = nil, title = nil,
+    node_id = nil,           -- GraphQL global node ID (for markFileAsViewed mutations)
     head_ref = nil, base_ref = nil, head_sha = nil, base_sha = nil,
     files = {},              -- GhFile[] from API
     current_idx = 0,         -- 1-based index into files
@@ -50,6 +51,7 @@ function M.reset()
     repo = { owner = nil, name = nil, branch = nil, root = nil },
     pr = {
       number = nil, title = nil,
+      node_id = nil,
       head_ref = nil, base_ref = nil, head_sha = nil, base_sha = nil,
       files = {},
       current_idx = 0,

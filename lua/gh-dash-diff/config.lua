@@ -48,6 +48,10 @@ M.defaults = {
     toggle_viewed  = "<leader>cv",
     submit_review  = "<leader>rs",
 
+    -- Edit
+    edit_file      = "<CR>",
+    open_in_browser = "o",
+
     -- General
     close          = "q",
     refresh        = "R",

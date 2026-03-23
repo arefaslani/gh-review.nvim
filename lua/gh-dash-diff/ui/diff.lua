@@ -138,11 +138,14 @@ function M.set_keymaps(state, buf)
     if not file then return end
     local filename = file.filename
     local viewed = state.review.viewed_files
+    local now_viewed
     if viewed[filename] then
       viewed[filename] = nil
+      now_viewed = false
       vim.notify("Unmarked as viewed: " .. filename)
     else
       viewed[filename] = true
+      now_viewed = true
       vim.notify("Marked as viewed: " .. filename)
     end
     -- Refresh picker to update viewed indicators
@@ -153,12 +156,38 @@ function M.set_keymaps(state, buf)
       local reviewed_label = viewed[filename] and "  %#DiagnosticOk#✔ Reviewed%* " or ""
       vim.wo[right_win].winbar = " " .. filename .. "  %=%#Comment#(head)%*" .. reviewed_label
     end
+    -- Persist to GitHub API in background
+    local node_id = state.pr.node_id
+    if node_id then
+      local files_mod = require("gh-dash-diff.gh.files")
+      local api_fn = now_viewed and files_mod.mark_file_as_viewed or files_mod.unmark_file_as_viewed
+      api_fn(node_id, filename, function(err)
+        if err then
+          vim.notify("gh-dash-diff: Failed to persist viewed state: " .. err, vim.log.levels.WARN)
+        end
+      end)
+    end
   end, "Toggle file viewed status")
 
   -- Review submission
   map(cfg.submit_review, function()
     require("gh-dash-diff.ui.input").open_review_dialog(state)
   end, "Submit review")
+
+  -- Edit file at cursor
+  map(cfg.edit_file, function()
+    require("gh-dash-diff").edit_file(state)
+  end, "Edit file at cursor line")
+
+  -- Open PR in browser
+  map(cfg.open_in_browser, function()
+    local owner = state.repo.owner
+    local name = state.repo.name
+    local pr_number = state.pr.number
+    if owner and name and pr_number then
+      vim.system({ "gh", "pr", "view", tostring(pr_number), "--repo", owner .. "/" .. name, "--web" })
+    end
+  end, "Open PR in browser")
 
   -- Close
   map(cfg.close, function()
@@ -215,6 +244,11 @@ function M.show_help(state)
     "",
     "  Review",
     string.format("  %-16s  Submit review", k(cfg.submit_review)),
+    "",
+    "  Edit",
+    string.format("  %-16s  Edit file at cursor line", k(cfg.edit_file)),
+    string.format("  %-16s  Resume PR review", "<leader>ppr"),
+    string.format("  %-16s  Open PR in browser", k(cfg.open_in_browser)),
     "",
     "  General",
     string.format("  %-16s  Close PR review", k(cfg.close)),
@@ -276,10 +310,11 @@ end
 --- @param state GhDashDiffState
 --- @param file GhFile
 --- @param idx number 1-based index into the current file list
---- @param opts? {base_ref?: string, head_ref?: string} Override git refs (for commit mode)
+--- @param opts? {base_ref?: string, head_ref?: string, restore_line?: integer} Override git refs (for commit mode)
 function M.load_file(state, file, idx, opts)
   local files_mod = require("gh-dash-diff.gh.files")
   local root = state.repo.root
+  local restore_line = opts and opts.restore_line
 
   if not root then
     vim.notify("gh-dash-diff: git root not set in state", vim.log.levels.ERROR)
@@ -297,6 +332,12 @@ function M.load_file(state, file, idx, opts)
   -- Binary file: show placeholder on both sides immediately
   if files_mod.is_binary(file) then
     M._apply_buffers(state, file, BINARY_PLACEHOLDER, BINARY_PLACEHOLDER, idx)
+    if restore_line then
+      local rw = state.layout.right_win
+      if rw and vim.api.nvim_win_is_valid(rw) then
+        pcall(vim.api.nvim_win_set_cursor, rw, { restore_line, 0 })
+      end
+    end
     return
   end
 
@@ -322,6 +363,12 @@ function M.load_file(state, file, idx, opts)
     end
 
     M._apply_buffers(state, file, base_lines, head_lines, idx)
+    if restore_line then
+      local rw = state.layout.right_win
+      if rw and vim.api.nvim_win_is_valid(rw) then
+        pcall(vim.api.nvim_win_set_cursor, rw, { restore_line, 0 })
+      end
+    end
   end
 
   -- Fetch base version (empty for added/copied files — skip to save a git call)
@@ -330,6 +377,12 @@ function M.load_file(state, file, idx, opts)
     base_lines = {}
     if pending == 0 then
       M._apply_buffers(state, file, base_lines, head_lines, idx)
+      if restore_line then
+        local rw = state.layout.right_win
+        if rw and vim.api.nvim_win_is_valid(rw) then
+          pcall(vim.api.nvim_win_set_cursor, rw, { restore_line, 0 })
+        end
+      end
     end
   else
     files_mod.get_content(base_ref, base_filename, root, function(err, lines)
@@ -349,6 +402,12 @@ function M.load_file(state, file, idx, opts)
     head_lines = {}
     if pending == 0 then
       M._apply_buffers(state, file, base_lines, head_lines, idx)
+      if restore_line then
+        local rw = state.layout.right_win
+        if rw and vim.api.nvim_win_is_valid(rw) then
+          pcall(vim.api.nvim_win_set_cursor, rw, { restore_line, 0 })
+        end
+      end
     end
   else
     files_mod.get_content(head_ref, head_filename, root, function(err, lines)

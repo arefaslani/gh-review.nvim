@@ -11,6 +11,10 @@ vim.api.nvim_create_user_command("GhDashDiffClose", function()
   require("gh-dash-diff").close()
 end, { desc = "Close GitHub PR diff viewer" })
 
+vim.api.nvim_create_user_command("GhDashDiffResume", function()
+  require("gh-dash-diff").resume_pr()
+end, { desc = "Resume last PR review" })
+
 vim.api.nvim_create_user_command("GhDash", function()
   require("gh-dash-diff").open_dash()
 end, { desc = "Open gh-dash inside Neovim" })

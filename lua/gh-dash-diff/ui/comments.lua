@@ -72,6 +72,119 @@ local function wrap_line(text, max_width)
   return result
 end
 
+--- Parse a single line into {text, hl} chunks, handling **bold** and `inline code`.
+--- Does not handle nested formatting.
+--- @param text string
+--- @param default_hl string
+--- @return table[] list of {text, hl} pairs
+local function parse_inline(text, default_hl)
+  local chunks = {}
+  local i = 1
+  while i <= #text do
+    local b_start = text:find("%*%*", i)
+    local c_start = text:find("`", i)
+    local next_pos, next_type
+    if b_start and (not c_start or b_start <= c_start) then
+      next_pos, next_type = b_start, "bold"
+    elseif c_start then
+      next_pos, next_type = c_start, "code"
+    end
+    if not next_pos then
+      table.insert(chunks, { text:sub(i), default_hl })
+      break
+    end
+    if next_pos > i then
+      table.insert(chunks, { text:sub(i, next_pos - 1), default_hl })
+    end
+    if next_type == "bold" then
+      local close = text:find("%*%*", next_pos + 2)
+      if close then
+        local inner = text:sub(next_pos + 2, close - 1)
+        if #inner > 0 then table.insert(chunks, { inner, "GhCommentBold" }) end
+        i = close + 2
+      else
+        table.insert(chunks, { "**", default_hl })
+        i = next_pos + 2
+      end
+    else
+      local close = text:find("`", next_pos + 1)
+      if close then
+        local inner = text:sub(next_pos + 1, close - 1)
+        if #inner > 0 then table.insert(chunks, { inner, "GhCommentCode" }) end
+        i = close + 1
+      else
+        table.insert(chunks, { "`", default_hl })
+        i = next_pos + 1
+      end
+    end
+  end
+  return chunks
+end
+
+--- Wrap a list of {text, hl} chunks into rows that fit max_width visible characters.
+--- Returns a list of rows, each being a list of {text, hl} chunks.
+--- @param chunks table[]
+--- @param max_width integer
+--- @return table[][]
+local function wrap_chunks(chunks, max_width)
+  if max_width <= 0 then return { chunks } end
+  local total = 0
+  for _, ch in ipairs(chunks) do total = total + #ch[1] end
+  if total <= max_width then return { chunks } end
+
+  local rows = {}
+  local current_row = {}
+  local current_len = 0
+
+  local function flush()
+    if #current_row > 0 then
+      table.insert(rows, current_row)
+      current_row = {}
+      current_len = 0
+    end
+  end
+
+  for _, ch in ipairs(chunks) do
+    local text, hl = ch[1], ch[2]
+    local s = text
+    while #s > 0 do
+      local remaining = max_width - current_len
+      if remaining <= 0 then
+        flush()
+        remaining = max_width
+      end
+      if #s <= remaining then
+        table.insert(current_row, { s, hl })
+        current_len = current_len + #s
+        s = ""
+      else
+        -- Try word boundary split within remaining chars
+        local break_at = nil
+        for bi = remaining, 1, -1 do
+          if s:sub(bi, bi) == " " then
+            break_at = bi
+            break
+          end
+        end
+        if break_at then
+          if break_at > 1 then
+            table.insert(current_row, { s:sub(1, break_at - 1), hl })
+          end
+          flush()
+          s = s:sub(break_at + 1)  -- skip the space
+        else
+          -- Hard break
+          table.insert(current_row, { s:sub(1, remaining), hl })
+          flush()
+          s = s:sub(remaining + 1)
+        end
+      end
+    end
+  end
+  flush()
+  return rows
+end
+
 --- Build virt_lines for a single comment.
 --- @param comment GhComment
 --- @param is_resolved boolean
@@ -105,9 +218,45 @@ local function comment_virt_lines(comment, is_resolved, is_reply, max_width)
   local body_indent = is_reply and "      " or "  "
   local indent_width = #body_indent
   local avail = math.max(20, max_width - indent_width)
+
+  local in_code = false
+  local is_suggest = false
   for _, line in ipairs(vim.split(body, "\n", { plain = true })) do
-    for _, segment in ipairs(wrap_line(line, avail)) do
-      table.insert(lines, { { body_indent .. segment, body_hl } })
+    if line:match("^```") then
+      if not in_code then
+        in_code = true
+        is_suggest = line:match("^```suggestion") ~= nil
+        local fence_hl = is_suggest and "GhCommentSuggestion" or "GhCommentCode"
+        table.insert(lines, { { body_indent .. line, fence_hl } })
+      else
+        local fence_hl = is_suggest and "GhCommentSuggestion" or "GhCommentCode"
+        table.insert(lines, { { body_indent .. line, fence_hl } })
+        in_code = false
+        is_suggest = false
+      end
+    elseif in_code then
+      local code_hl = is_suggest and "GhCommentSuggestion" or "GhCommentCode"
+      for _, seg in ipairs(wrap_line(line, avail)) do
+        table.insert(lines, { { body_indent .. seg, code_hl } })
+      end
+    elseif is_resolved then
+      -- Resolved comments: plain rendering, no markdown decoration
+      for _, seg in ipairs(wrap_line(line, avail)) do
+        table.insert(lines, { { body_indent .. seg, body_hl } })
+      end
+    else
+      local chunks = parse_inline(line, body_hl)
+      if #chunks == 0 then
+        table.insert(lines, { { body_indent, body_hl } })
+      else
+        for _, row in ipairs(wrap_chunks(chunks, avail)) do
+          local vline = { { body_indent, body_hl } }
+          for _, ch in ipairs(row) do
+            table.insert(vline, ch)
+          end
+          table.insert(lines, vline)
+        end
+      end
     end
   end
 
@@ -128,10 +277,17 @@ local function render_thread(buf, thread, ns_comments, ns_signs, ns_eol)
   if not vim.api.nvim_buf_is_valid(buf) then return end
 
   -- Determine available width for comment text from the buffer's window.
-  local win_width = math.floor(vim.o.columns / 2)
+  -- Subtract sign column, line numbers, fold column etc. so text isn't clipped.
+  local win_width = math.floor(vim.o.columns / 2) - 8
   local wins = vim.fn.win_findbuf(buf)
   if wins and #wins > 0 then
-    win_width = vim.api.nvim_win_get_width(wins[1])
+    local w = wins[1]
+    local textoff = 0
+    local info = vim.fn.getwininfo(w)
+    if info and info[1] then
+      textoff = info[1].textoff or 0
+    end
+    win_width = vim.api.nvim_win_get_width(w) - textoff - 1
   end
 
   -- Determine anchor line (1-based from GitHub; convert to 0-based for extmarks)
