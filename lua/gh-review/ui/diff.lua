@@ -209,6 +209,10 @@ function M.set_keymaps(state, buf)
   -- Help
   map("?", function() M.show_help(state) end, "Show keybinding help")
 
+  -- Disable jumplist navigation (scratch buffer URIs break <C-o>/<C-i>)
+  vim.keymap.set("n", "<C-o>", "<Nop>", { buffer = buf, silent = true })
+  vim.keymap.set("n", "<C-i>", "<Nop>", { buffer = buf, silent = true })
+
   -- Open URL under cursor / in comment at cursor line
   vim.keymap.set("n", "gx", function()
     local urls = require("gh-review.ui.comments").get_urls_at_cursor(buf)
@@ -308,14 +312,18 @@ function M.show_help(state)
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
-    -- Double-schedule so the restore runs after any callbacks queued by the
-    -- window close itself (WinClosed autocmds, scrollbind sync, etc.).
+    -- Schedule restore after window close settles, then re-sync scrollbind
+    -- to prevent the scroll-sync from overriding the restored position.
     vim.schedule(function()
-      vim.schedule(function()
-        if vim.api.nvim_win_is_valid(diff_win) then
-          vim.api.nvim_set_current_win(diff_win)
-          pcall(vim.api.nvim_win_set_cursor, diff_win, saved_pos)
-        end
+      if not vim.api.nvim_win_is_valid(diff_win) then return end
+      vim.api.nvim_set_current_win(diff_win)
+      -- Temporarily disable scrollbind to prevent sync from fighting us
+      vim.wo[diff_win].scrollbind = false
+      pcall(vim.api.nvim_win_set_cursor, diff_win, saved_pos)
+      -- Re-enable scrollbind and sync from the restored position
+      vim.wo[diff_win].scrollbind = true
+      vim.api.nvim_win_call(diff_win, function()
+        pcall(vim.cmd, "syncbind")
       end)
     end)
   end
