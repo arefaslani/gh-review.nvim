@@ -11,8 +11,8 @@ M.state = {
     head_ref = nil, base_ref = nil, head_sha = nil, base_sha = nil,
     files = {},              -- GhFile[] from API
     current_idx = 0,         -- 1-based index into files
-    file_history = {},       -- stack of previously viewed file indices
-    file_forward = {},       -- forward stack for <C-i>
+    jumplist = {},           -- list of {file_idx, line, col} entries
+    jumplist_pos = 0,        -- current position (0 = at head, >0 = rewound)
     commits = {},            -- GhCommit[] from API
     current_commit_idx = 0,  -- 1-based index into commits
     review_mode = "files",   -- "files" or "commits"
@@ -57,8 +57,8 @@ function M.reset()
       head_ref = nil, base_ref = nil, head_sha = nil, base_sha = nil,
       files = {},
       current_idx = 0,
-      file_history = {},
-      file_forward = {},
+      jumplist = {},
+      jumplist_pos = 0,
       commits = {},
       current_commit_idx = 0,
       review_mode = "files",

@@ -92,12 +92,14 @@ function M.set_keymaps(state, buf)
     require("gh-review.ui.navigation").prev_commit(state)
   end, "Previous commit")
 
-  -- Comment navigation
+  -- Comment navigation (push jump before moving)
   map(cfg.next_comment, function()
+    require("gh-review.ui.navigation").push_jump(state)
     require("gh-review.ui.comments").goto_next(buf)
   end, "Next comment")
 
   map(cfg.prev_comment, function()
+    require("gh-review.ui.navigation").push_jump(state)
     require("gh-review.ui.comments").goto_prev(buf)
   end, "Previous comment")
 
@@ -141,14 +143,13 @@ function M.set_keymaps(state, buf)
     local file = state.pr.files[state.pr.current_idx]
     if not file then return end
     local cur_line = vim.api.nvim_win_get_cursor(0)[1]
-    local side = vim.api.nvim_get_current_win() == state.layout.left_win and "LEFT" or "RIGHT"
-    -- Find thread near cursor
+    -- Find closest thread on this file near cursor (either side)
     local best, best_dist = nil, math.huge
     for _, thread in ipairs(state.review.threads or {}) do
-      if thread.path == file.filename and (thread.side == side or thread.side == nil) then
+      if thread.path == file.filename then
         local t_line = thread.line or thread.original_line or 0
         local dist = math.abs(t_line - cur_line)
-        if dist <= 5 and dist < best_dist then
+        if dist <= 10 and dist < best_dist then
           best, best_dist = thread, dist
         end
       end
@@ -245,13 +246,13 @@ function M.set_keymaps(state, buf)
   -- Help
   map("?", function() M.show_help(state) end, "Show keybinding help")
 
-  -- File history navigation (replaces jumplist which doesn't work with scratch buffers)
+  -- Custom jumplist navigation (replaces native which doesn't work with scratch buffers)
   vim.keymap.set("n", "<C-o>", function()
-    require("gh-review.ui.navigation").file_back(state)
-  end, { buffer = buf, silent = true, desc = "Previous file (history)" })
+    require("gh-review.ui.navigation").jump_back(state)
+  end, { buffer = buf, silent = true, desc = "Jump back" })
   vim.keymap.set("n", "<C-i>", function()
-    require("gh-review.ui.navigation").file_forward(state)
-  end, { buffer = buf, silent = true, desc = "Next file (history)" })
+    require("gh-review.ui.navigation").jump_forward(state)
+  end, { buffer = buf, silent = true, desc = "Jump forward" })
 
   -- Open URL under cursor / in comment at cursor line
   vim.keymap.set("n", "gx", function()
