@@ -309,23 +309,39 @@ function M.show_help(state)
   vim.api.nvim_set_option_value("cursorline", false, { win = win })
 
   local function close()
+    -- Suspend bind on BOTH diff windows before closing the float,
+    -- so Neovim's automatic focus-restore doesn't trigger a sync.
+    local left  = state.layout.left_win
+    local right = state.layout.right_win
+    for _, w in ipairs({ left, right }) do
+      if w and vim.api.nvim_win_is_valid(w) then
+        vim.wo[w].scrollbind = false
+        vim.wo[w].cursorbind = false
+      end
+    end
+
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
-    -- Schedule restore after window close settles, then re-sync scrollbind
-    -- to prevent the scroll-sync from overriding the restored position.
-    vim.schedule(function()
-      if not vim.api.nvim_win_is_valid(diff_win) then return end
+
+    -- Restore cursor, then re-enable bind and sync from the right position
+    if vim.api.nvim_win_is_valid(diff_win) then
       vim.api.nvim_set_current_win(diff_win)
-      -- Temporarily disable scrollbind to prevent sync from fighting us
-      vim.wo[diff_win].scrollbind = false
       pcall(vim.api.nvim_win_set_cursor, diff_win, saved_pos)
-      -- Re-enable scrollbind and sync from the restored position
-      vim.wo[diff_win].scrollbind = true
+    end
+
+    for _, w in ipairs({ left, right }) do
+      if w and vim.api.nvim_win_is_valid(w) then
+        vim.wo[w].scrollbind = true
+        vim.wo[w].cursorbind = true
+      end
+    end
+
+    if vim.api.nvim_win_is_valid(diff_win) then
       vim.api.nvim_win_call(diff_win, function()
         pcall(vim.cmd, "syncbind")
       end)
-    end)
+    end
   end
 
   local o = { buffer = buf, silent = true, nowait = true }
