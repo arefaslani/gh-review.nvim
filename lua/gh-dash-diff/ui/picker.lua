@@ -28,12 +28,34 @@ local function short_path(filepath)
   return parts[#parts - 1] .. "/" .. parts[#parts]
 end
 
---- Build picker items from a PR file list.
+--- Build picker items from a PR file list with directory grouping.
+--- Returns items (with dir_header entries interspersed) and a file-idx→picker-row map.
 --- @param files GhFile[]
---- @return table[] items Snacks picker items
+--- @return table[] items, table file_idx_to_picker_idx
 local function build_file_items(files)
+  -- Sort a copy by filename so directories are naturally grouped
+  local sorted = {}
+  for _, f in ipairs(files) do
+    table.insert(sorted, f)
+  end
+  table.sort(sorted, function(a, b) return a.filename < b.filename end)
+
   local items = {}
-  for i, f in ipairs(files) do
+  local file_idx_to_picker_idx = {}
+  local current_dir = nil
+
+  for i, f in ipairs(sorted) do
+    local dir = f.filename:match("^(.*)/[^/]+$")  -- nil for root-level files
+
+    if dir ~= current_dir then
+      current_dir = dir
+      if dir then
+        table.insert(items, { type = "dir_header", text = dir, display = dir, idx = 0 })
+      end
+    end
+
+    file_idx_to_picker_idx[i] = #items + 1
+
     local icon  = STATUS_ICONS[f.status] or "?"
     local stats = string.format("+%d -%d", f.additions or 0, f.deletions or 0)
     table.insert(items, {
@@ -42,16 +64,17 @@ local function build_file_items(files)
       text        = f.filename,      -- used for fuzzy filtering
       file        = f.filename,
       filename    = f.filename,
-      display     = short_path(f.filename),
+      display     = f.filename:match("[^/]+$") or f.filename,
       status      = f.status or "modified",
       icon        = icon,
       stats       = stats,
       additions   = f.additions or 0,
       deletions   = f.deletions or 0,
-      _file_entry = f,              -- raw GhFile for downstream use
+      indent      = dir ~= nil,      -- true when nested under a directory header
+      _file_entry = f,               -- raw GhFile for downstream use
     })
   end
-  return items
+  return items, file_idx_to_picker_idx
 end
 
 --- Build picker items from a commit list.
@@ -89,6 +112,7 @@ end
 --- @param item table Snacks picker item
 local function load_item_diff(state, item)
   if not item then return end
+  if item.type == "dir_header" then return end  -- headers are not selectable
 
   if item.type == "commit" then
     -- Commit mode: fetch files for this commit then show first file
@@ -129,9 +153,14 @@ function M.open(state, config)
   end
 
   local is_commit_mode = state.pr.review_mode == "commits"
-  local items = is_commit_mode
-    and build_commit_items(state.pr.commits)
-    or  build_file_items(state.pr.files)
+  local items
+  if is_commit_mode then
+    items = build_commit_items(state.pr.commits)
+  else
+    local file_map
+    items, file_map = build_file_items(state.pr.files)
+    state.layout.picker_file_map = file_map
+  end
 
   local title = is_commit_mode
     and string.format("PR #%d — Commits", state.pr.number)
@@ -170,9 +199,13 @@ function M.open(state, config)
       width   = config.picker.width or 35,
     },
 
-    -- Custom line format: handles both file and commit items
+    -- Custom line format: handles dir_header, file, and commit items
     format = function(item, _picker)
-      if item.type == "commit" then
+      if item.type == "dir_header" then
+        return {
+          { item.display .. "/", "Comment" },
+        }
+      elseif item.type == "commit" then
         local is_active = item.idx == state.pr.current_commit_idx
         local prefix    = is_active and "▶ " or "  "
         local name_hl   = is_active and "Special" or "Normal"
@@ -186,16 +219,17 @@ function M.open(state, config)
         local is_viewed = state.review.viewed_files[item.filename]
         local hl        = STATUS_HL[item.status] or "Normal"
         local stat_hl   = item.additions > 0 and "GhStatAdd" or "GhStatDel"
+        local indent    = item.indent and "  " or ""
         local prefix    = is_active and "▶ " or "  "
         local name_hl   = is_active and "Special" or "Normal"
         local viewed_chunk = is_viewed
           and { "✔ ", "DiagnosticOk" }
           or  { "  ", "Normal" }
         return {
-          { prefix .. item.icon .. " ", is_active and "Special" or hl },
+          { indent .. prefix .. item.icon .. " ", is_active and "Special" or hl },
           viewed_chunk,
-          { item.display .. " ",        name_hl },
-          { item.stats,                 stat_hl },
+          { item.display .. " ",                  name_hl },
+          { item.stats,                           stat_hl },
         }
       end
     end,
@@ -339,12 +373,13 @@ end
 --- Programmatically move the picker cursor to an item by index.
 --- Used by ]f/[f and ]g/[g navigation keymaps.
 --- @param state GhDashDiffState
---- @param idx number 1-based index
+--- @param idx number 1-based file index
 function M.select_by_index(state, idx)
-  if state.layout.picker then
-    pcall(function() state.layout.picker:set_cursor(idx) end)
-    M.refresh(state)
-  end
+  if not state.layout.picker then return end
+  -- In file mode, items include dir_header rows, so map file idx → picker row
+  local picker_row = state.layout.picker_file_map and state.layout.picker_file_map[idx] or idx
+  pcall(function() state.layout.picker:set_cursor(picker_row) end)
+  M.refresh(state)
 end
 
 return M
