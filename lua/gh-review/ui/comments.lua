@@ -29,7 +29,7 @@ end
 local SEP = string.rep("─", 60)
 
 --- Choose the target buffer for a thread based on its side.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @param side string "LEFT"|"RIGHT" (nil treated as "RIGHT")
 --- @return integer|nil
 local function buf_for_side(state, side)
@@ -373,7 +373,7 @@ end
 --- Called after threads are initially fetched (or refreshed).
 --- @param threads GhThread[]
 function M.render_all(threads)
-  local state = require("gh-dash-diff.state").state
+  local state = require("gh-review.state").state
   if not state.layout.ready then return end
 
   -- Determine current file path
@@ -390,7 +390,7 @@ end
 
 --- Render comments for a specific file's diff buffers.
 --- Called when switching files or after a comment is added.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @param filename string
 function M.render_for_file(state, filename)
   if not state.review.comments_visible then return end
@@ -474,7 +474,7 @@ end
 --- Jump to the next line with a comment extmark in the buffer.
 --- @param buf integer
 function M.goto_next(buf)
-  local state = require("gh-dash-diff.state").state
+  local state = require("gh-review.state").state
   local ns = state.ns.comments
   if not ns then return end
 
@@ -502,7 +502,7 @@ end
 --- Jump to the previous line with a comment extmark in the buffer.
 --- @param buf integer
 function M.goto_prev(buf)
-  local state = require("gh-dash-diff.state").state
+  local state = require("gh-review.state").state
   local ns = state.ns.comments
   if not ns then return end
 
@@ -527,7 +527,7 @@ end
 
 --- Convenience wrapper: re-render pending comments for the current file.
 --- Called by ui/input.lua after a pending comment is added or removed.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.update_pending(state)
   local files = state.pr.files
   local idx = state.pr.current_idx
@@ -538,7 +538,7 @@ end
 
 --- Toggle comment virt_lines visibility.
 --- Clears or re-renders all comment namespaces for the current file.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.toggle(state)
   state.review.comments_visible = not state.review.comments_visible
 
@@ -549,7 +549,7 @@ function M.toggle(state)
     if idx >= 1 and idx <= #files then
       M.render_for_file(state, files[idx].filename)
     end
-    vim.notify("gh-dash-diff: comments shown", vim.log.levels.INFO)
+    vim.notify("gh-review: comments shown", vim.log.levels.INFO)
   else
     -- Clear all extmarks from both diff buffers
     local ns_c = state.ns.comments
@@ -559,7 +559,7 @@ function M.toggle(state)
       clear_buf(state.layout.left_buf, ns_c, ns_s, ns_e)
       clear_buf(state.layout.right_buf, ns_c, ns_s, ns_e)
     end
-    vim.notify("gh-dash-diff: comments hidden", vim.log.levels.INFO)
+    vim.notify("gh-review: comments hidden", vim.log.levels.INFO)
   end
 end
 

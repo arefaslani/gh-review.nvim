@@ -1,5 +1,5 @@
 local M = {}
-local exec = require("gh-dash-diff.gh.exec")
+local exec = require("gh-review.gh.exec")
 
 --- Detect the GitHub owner and repo name for a directory.
 --- Tries gh CLI first (handles SSH, HTTPS, forks, GitHub Enterprise),

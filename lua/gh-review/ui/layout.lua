@@ -3,8 +3,8 @@ local M = {}
 --- Create the PR review tab with side-by-side diff windows.
 --- Opens a dedicated tabpage, creates left+right windows via vsplit,
 --- then opens the Snacks picker sidebar.
---- @param state GhDashDiffState
---- @param config GhDashDiffConfig
+--- @param state GhReviewState
+--- @param config GhReviewConfig
 function M.open(state, config)
   -- 1. Open dedicated tab
   vim.cmd("tabnew")
@@ -18,7 +18,7 @@ function M.open(state, config)
   state.layout.right_win = vim.api.nvim_get_current_win()
 
   -- 4. Open the Snacks picker sidebar (creates its own split on the left)
-  require("gh-dash-diff.ui.picker").open(state, config)
+  require("gh-review.ui.picker").open(state, config)
 
   -- 5. Equalize the two diff windows
   if vim.api.nvim_win_is_valid(state.layout.left_win)
@@ -36,7 +36,7 @@ function M.open(state, config)
 end
 
 --- Tear down the entire PR review session.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.close(state)
   -- Disable WinClosed guard immediately so closing windows doesn't schedule
   -- a redundant M.close() (which would race with a subsequent open_pr).

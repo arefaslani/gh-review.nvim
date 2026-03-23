@@ -38,7 +38,7 @@ local function _create_float(opts)
 end
 
 --- Determine the diff side ("LEFT" or "RIGHT") for the current window.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @return "LEFT"|"RIGHT"
 local function get_side(state)
   return vim.api.nvim_get_current_win() == state.layout.left_win and "LEFT" or "RIGHT"
@@ -57,7 +57,7 @@ local function comment_path(file, side)
 end
 
 --- Find all review threads within ±5 lines of the given file/line/side.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @param filepath string
 --- @param line integer
 --- @param side "LEFT"|"RIGHT"
@@ -79,7 +79,7 @@ end
 
 --- Find the closest review thread within ±5 lines of the given file/line/side.
 --- Used by reply_thread() to locate the thread under the cursor.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @param filepath string
 --- @param line integer
 --- @param side "LEFT"|"RIGHT"
@@ -163,11 +163,11 @@ end
 
 --- Open a floating window for a new inline comment on the current cursor line.
 --- The comment is stored as PENDING — not sent to GitHub until `open_review_dialog`.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.open_comment(state)
   local file = state.pr.files[state.pr.current_idx]
   if not file then
-    vim.notify("gh-dash-diff: No file selected", vim.log.levels.WARN)
+    vim.notify("gh-review: No file selected", vim.log.levels.WARN)
     return
   end
 
@@ -189,28 +189,28 @@ function M.open_comment(state)
     }
     table.insert(state.review.pending_comments, pending)
     vim.notify(
-      string.format("gh-dash-diff: Comment queued (%d pending)", #state.review.pending_comments),
+      string.format("gh-review: Comment queued (%d pending)", #state.review.pending_comments),
       vim.log.levels.INFO
     )
     -- Ask comments module to refresh signs/EOL indicators if available
-    local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+    local ok, cm = pcall(require, "gh-review.ui.comments")
     if ok then pcall(cm.update_pending, state) end
   end, make_restore(saved_win, saved_pos))
 end
 
 --- Open a floating window for a new standalone inline comment posted immediately.
 --- Unlike open_comment, this posts directly to GitHub without going through a review.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.open_single_comment(state)
   local file = state.pr.files[state.pr.current_idx]
   if not file then
-    vim.notify("gh-dash-diff: No file selected", vim.log.levels.WARN)
+    vim.notify("gh-review: No file selected", vim.log.levels.WARN)
     return
   end
 
   local head_sha = state.pr.head_sha
   if not head_sha then
-    vim.notify("gh-dash-diff: No commit SHA available", vim.log.levels.WARN)
+    vim.notify("gh-review: No commit SHA available", vim.log.levels.WARN)
     return
   end
 
@@ -222,7 +222,7 @@ function M.open_single_comment(state)
   local path = comment_path(file, side)
 
   open_input_float(" Post Comment (immediate) ", function(body)
-    local reviews = require("gh-dash-diff.gh.reviews")
+    local reviews = require("gh-review.gh.reviews")
     local owner   = state.repo.owner
     local repo    = state.repo.name
 
@@ -234,15 +234,15 @@ function M.open_single_comment(state)
       body       = body,
     }, function(err, _)
       if err then
-        vim.notify("gh-dash-diff: Comment failed: " .. err, vim.log.levels.ERROR)
+        vim.notify("gh-review: Comment failed: " .. err, vim.log.levels.ERROR)
         return
       end
-      vim.notify("gh-dash-diff: Comment posted", vim.log.levels.INFO)
+      vim.notify("gh-review: Comment posted", vim.log.levels.INFO)
       -- Refresh threads and re-render comments for current file
       reviews.fetch_threads(owner, repo, state.pr.number, function(_, threads)
         if not threads then return end
         state.review.threads = threads
-        local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+        local ok, cm = pcall(require, "gh-review.ui.comments")
         if ok then pcall(cm.render_for_file, state, file.filename) end
       end)
     end)
@@ -252,11 +252,11 @@ end
 --- Open a floating window for replying to a review thread near the cursor.
 --- Replies are sent IMMEDIATELY to GitHub (not queued as pending).
 --- When multiple threads exist near the cursor, shows a selection dialog first.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.reply_thread(state)
   local file = state.pr.files[state.pr.current_idx]
   if not file then
-    vim.notify("gh-dash-diff: No file selected", vim.log.levels.WARN)
+    vim.notify("gh-review: No file selected", vim.log.levels.WARN)
     return
   end
 
@@ -268,7 +268,7 @@ function M.reply_thread(state)
   local threads = find_threads_near(state, path, line, side)
 
   if #threads == 0 then
-    vim.notify("gh-dash-diff: No thread found near cursor", vim.log.levels.WARN)
+    vim.notify("gh-review: No thread found near cursor", vim.log.levels.WARN)
     return
   end
 
@@ -277,27 +277,27 @@ function M.reply_thread(state)
   local function open_reply_for(thread)
     local root_comment = thread.comments and thread.comments[1]
     if not root_comment then
-      vim.notify("gh-dash-diff: Thread has no comments", vim.log.levels.WARN)
+      vim.notify("gh-review: Thread has no comments", vim.log.levels.WARN)
       return
     end
 
     open_input_float(" Reply to Thread ", function(body)
-      local reviews = require("gh-dash-diff.gh.reviews")
+      local reviews = require("gh-review.gh.reviews")
       local owner   = state.repo.owner
       local repo    = state.repo.name
 
       reviews.reply_to_comment(owner, repo, state.pr.number, root_comment.id, body,
         function(err, _)
           if err then
-            vim.notify("gh-dash-diff: Reply failed: " .. err, vim.log.levels.ERROR)
+            vim.notify("gh-review: Reply failed: " .. err, vim.log.levels.ERROR)
             return
           end
-          vim.notify("gh-dash-diff: Reply posted", vim.log.levels.INFO)
+          vim.notify("gh-review: Reply posted", vim.log.levels.INFO)
           -- Refresh threads and re-render comments for current file
           reviews.fetch_threads(owner, repo, state.pr.number, function(_, updated)
             if not updated then return end
             state.review.threads = updated
-            local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+            local ok, cm = pcall(require, "gh-review.ui.comments")
             if ok then pcall(cm.render_for_file, state, file.filename) end
           end)
         end
@@ -375,19 +375,19 @@ end
 --- Pending comments are removed from local state; posted comments are deleted via API.
 --- Only posted comments authored by the current user are shown.
 --- Shows a numbered selection dialog when multiple candidates exist.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.delete_pending(state)
   local file = state.pr.files[state.pr.current_idx]
   if not file then
-    vim.notify("gh-dash-diff: No file selected", vim.log.levels.WARN)
+    vim.notify("gh-review: No file selected", vim.log.levels.WARN)
     return
   end
 
-  local reviews = require("gh-dash-diff.gh.reviews")
+  local reviews = require("gh-review.gh.reviews")
 
   reviews.get_authenticated_user(function(auth_err, current_login)
     if auth_err then
-      vim.notify("gh-dash-diff: Could not get current user: " .. auth_err, vim.log.levels.WARN)
+      vim.notify("gh-review: Could not get current user: " .. auth_err, vim.log.levels.WARN)
     end
 
     -- Collect pending comments for the current file
@@ -429,7 +429,7 @@ function M.delete_pending(state)
     end
 
     if #candidates == 0 then
-      vim.notify("gh-dash-diff: No deletable comments on this file", vim.log.levels.WARN)
+      vim.notify("gh-review: No deletable comments on this file", vim.log.levels.WARN)
       return
     end
 
@@ -442,24 +442,24 @@ function M.delete_pending(state)
           end
         end
         vim.notify(
-          string.format("gh-dash-diff: Pending comment deleted (%d remaining)", #state.review.pending_comments),
+          string.format("gh-review: Pending comment deleted (%d remaining)", #state.review.pending_comments),
           vim.log.levels.INFO
         )
-        local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+        local ok, cm = pcall(require, "gh-review.ui.comments")
         if ok then pcall(cm.render_for_file, state, file.filename) end
       else
         local owner = state.repo.owner
         local repo  = state.repo.name
         reviews.delete_comment(owner, repo, state.pr.number, candidate.comment.id, function(del_err)
           if del_err then
-            vim.notify("gh-dash-diff: Delete failed: " .. del_err, vim.log.levels.ERROR)
+            vim.notify("gh-review: Delete failed: " .. del_err, vim.log.levels.ERROR)
             return
           end
-          vim.notify("gh-dash-diff: Comment deleted", vim.log.levels.INFO)
+          vim.notify("gh-review: Comment deleted", vim.log.levels.INFO)
           reviews.fetch_threads(owner, repo, state.pr.number, function(_, threads)
             if not threads then return end
             state.review.threads = threads
-            local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+            local ok, cm = pcall(require, "gh-review.ui.comments")
             if ok then pcall(cm.render_for_file, state, file.filename) end
           end)
         end)
@@ -530,7 +530,7 @@ end
 --- Open the review submission dialog.
 --- Shows pending comment count and event options; on confirm calls
 --- `create_review_with_comments()` with all queued comments in a single API call.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.open_review_dialog(state)
   local owner    = state.repo.owner
   local repo     = state.repo.name
@@ -538,7 +538,7 @@ function M.open_review_dialog(state)
   local head_sha = state.pr.head_sha
 
   if not (owner and repo and pr_number) then
-    vim.notify("gh-dash-diff: No active PR session", vim.log.levels.WARN)
+    vim.notify("gh-review: No active PR session", vim.log.levels.WARN)
     return
   end
 
@@ -621,7 +621,7 @@ function M.open_review_dialog(state)
       })
     end
 
-    local reviews = require("gh-dash-diff.gh.reviews")
+    local reviews = require("gh-review.gh.reviews")
     reviews.create_review_with_comments(owner, repo, pr_number, {
       commit_sha = head_sha,
       event      = opt.event,
@@ -629,18 +629,18 @@ function M.open_review_dialog(state)
       comments   = api_comments,
     }, function(err, _)
       if err then
-        vim.notify("gh-dash-diff: Review failed: " .. err, vim.log.levels.ERROR)
+        vim.notify("gh-review: Review failed: " .. err, vim.log.levels.ERROR)
         return
       end
       state.review.pending_comments = {}
-      vim.notify("gh-dash-diff: Review submitted!", vim.log.levels.INFO)
+      vim.notify("gh-review: Review submitted!", vim.log.levels.INFO)
 
       -- Refresh threads and re-render current file's comments
       reviews.fetch_threads(owner, repo, pr_number, function(_, threads)
         if not threads then return end
         state.review.threads = threads
         local file = state.pr.files[state.pr.current_idx]
-        local ok, cm = pcall(require, "gh-dash-diff.ui.comments")
+        local ok, cm = pcall(require, "gh-review.ui.comments")
         if ok and file then pcall(cm.render_for_file, state, file.filename) end
       end)
     end)

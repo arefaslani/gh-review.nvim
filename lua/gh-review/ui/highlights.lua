@@ -43,7 +43,7 @@ function M.setup()
 
   -- Re-apply when colorscheme changes
   vim.api.nvim_create_autocmd("ColorScheme", {
-    group = vim.api.nvim_create_augroup("GhDashDiffHighlights", { clear = true }),
+    group = vim.api.nvim_create_augroup("GhReviewHighlights", { clear = true }),
     callback = apply,
   })
 end

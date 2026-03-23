@@ -1,9 +1,9 @@
 local M = {}
-local group = vim.api.nvim_create_augroup("GhDashDiffEvents", { clear = true })
+local group = vim.api.nvim_create_augroup("GhReviewEvents", { clear = true })
 
 function M.emit(event, data)
   vim.api.nvim_exec_autocmds("User", {
-    pattern = "GhDashDiff:" .. event,
+    pattern = "GhReview:" .. event,
     data = data,
   })
 end
@@ -11,7 +11,7 @@ end
 function M.on(event, callback)
   vim.api.nvim_create_autocmd("User", {
     group = group,
-    pattern = "GhDashDiff:" .. event,
+    pattern = "GhReview:" .. event,
     callback = function(ev) callback(ev.data) end,
   })
 end

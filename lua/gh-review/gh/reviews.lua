@@ -1,5 +1,5 @@
 local M = {}
-local exec = require("gh-dash-diff.gh.exec")
+local exec = require("gh-review.gh.exec")
 
 -- Cache for the authenticated user login
 local _auth_user_login = nil

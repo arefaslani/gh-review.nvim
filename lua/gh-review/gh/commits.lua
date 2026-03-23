@@ -1,5 +1,5 @@
 local M = {}
-local exec = require("gh-dash-diff.gh.exec")
+local exec = require("gh-review.gh.exec")
 
 --- List all commits in a PR.
 --- @param owner string

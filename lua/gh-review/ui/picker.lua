@@ -107,7 +107,7 @@ end
 
 --- Refresh the picker display so the active-file indicator re-renders.
 --- Safe to call even if the picker is closed or doesn't support refresh.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.refresh(state)
   if state.layout.picker then
     pcall(function() state.layout.picker:refresh() end)
@@ -115,7 +115,7 @@ function M.refresh(state)
 end
 
 --- Load the diff for a picker item. Used by confirm, on_change, and <CR>/<l>.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @param item table Snacks picker item
 local function load_item_diff(state, item)
   if not item then return end
@@ -125,10 +125,10 @@ local function load_item_diff(state, item)
     -- Commit mode: fetch files for this commit then show first file
     state.pr.current_commit_idx = item.commit_idx
     M.refresh(state)
-    local commits_mod = require("gh-dash-diff.gh.commits")
+    local commits_mod = require("gh-review.gh.commits")
     commits_mod.get_files(state.repo.owner, state.repo.name, item.sha, function(err, files)
       if err then
-        vim.notify("gh-dash-diff: " .. err, vim.log.levels.ERROR)
+        vim.notify("gh-review: " .. err, vim.log.levels.ERROR)
         return
       end
       state.pr.commit_files = files or {}
@@ -136,7 +136,7 @@ local function load_item_diff(state, item)
       M.refresh_items(state)
       if #files > 0 then
         state.pr.current_idx = 1
-        require("gh-dash-diff.ui.diff").load_file(
+        require("gh-review.ui.diff").load_file(
           state, files[1], 1,
           { base_ref = item.sha .. "~1", head_ref = item.sha }
         )
@@ -146,18 +146,18 @@ local function load_item_diff(state, item)
     -- Files mode: existing behavior
     state.pr.current_idx = item.file_idx
     M.refresh(state)
-    require("gh-dash-diff.ui.diff").load_file(state, item._file_entry, item.file_idx)
+    require("gh-review.ui.diff").load_file(state, item._file_entry, item.file_idx)
   end
 end
 
 --- Open the Snacks picker sidebar showing PR changed files or commits.
 --- Keeps itself open after selection (acts as a persistent sidebar).
---- @param state GhDashDiffState
---- @param config GhDashDiffConfig
+--- @param state GhReviewState
+--- @param config GhReviewConfig
 function M.open(state, config)
   local ok, Snacks = pcall(require, "snacks")
   if not ok then
-    vim.notify("gh-dash-diff requires snacks.nvim", vim.log.levels.ERROR)
+    vim.notify("gh-review requires snacks.nvim", vim.log.levels.ERROR)
     return
   end
 
@@ -202,7 +202,7 @@ function M.open(state, config)
   end
 
   local function close_fn(_picker)
-    require("gh-dash-diff").close()
+    require("gh-review").close()
   end
 
   local function back_fn(_picker)
@@ -309,7 +309,7 @@ function M.open(state, config)
       end
     end
 
-    local cfg = require("gh-dash-diff").config.keymaps
+    local cfg = require("gh-review").config.keymaps
 
     -- List window keymaps
     local list_win = picker.layout and picker.layout.wins and picker.layout.wins.list
@@ -343,11 +343,11 @@ function M.open(state, config)
             -- Persist to GitHub API in background
             local node_id = state.pr.node_id
             if node_id then
-              local files_mod = require("gh-dash-diff.gh.files")
+              local files_mod = require("gh-review.gh.files")
               local api_fn = now_viewed and files_mod.mark_file_as_viewed or files_mod.unmark_file_as_viewed
               api_fn(node_id, item.filename, function(err)
                 if err then
-                  vim.notify("gh-dash-diff: Failed to persist viewed state: " .. err, vim.log.levels.WARN)
+                  vim.notify("gh-review: Failed to persist viewed state: " .. err, vim.log.levels.WARN)
                 end
               end)
             end
@@ -377,9 +377,9 @@ end
 
 --- Close and reopen the picker with items matching the current review_mode.
 --- Uses vim.schedule to avoid Snacks WinResized errors during teardown.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.refresh_items(state)
-  local config = require("gh-dash-diff").config
+  local config = require("gh-review").config
 
   -- Temporarily disable WinClosed guard during picker swap
   state.layout.ready = false
@@ -409,9 +409,9 @@ function M.refresh_items(state)
 end
 
 --- Toggle the picker sidebar: close it if open, reopen it if closed.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.toggle(state)
-  local config = require("gh-dash-diff").config
+  local config = require("gh-review").config
 
   state.layout.ready = false
 
@@ -441,7 +441,7 @@ end
 
 --- Programmatically move the picker cursor to an item by index.
 --- Used by ]f/[f and ]g/[g navigation keymaps.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @param idx number 1-based file index
 function M.select_by_index(state, idx)
   if not state.layout.picker then return end

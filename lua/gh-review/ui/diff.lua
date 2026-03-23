@@ -9,7 +9,7 @@ local _buf_counter = 0
 --- @param lines string[] File content lines
 --- @param uri string Buffer name (e.g. "base://src/foo.lua")
 --- @param filetype string Detected filetype for syntax highlighting
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @return integer buf Buffer handle
 local function create_diff_buf(lines, uri, filetype, state)
   _buf_counter = _buf_counter + 1
@@ -43,7 +43,7 @@ end
 --- We don't delete old buffers here — they have bufhidden=wipe and will be
 --- automatically wiped when replaced in the window by _apply_buffers.
 --- Deleting them directly can close the windows they're displayed in.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.cleanup_current(state)
   -- Turn off diff mode in both windows
   for _, win_key in ipairs({ "left_win", "right_win" }) do
@@ -61,10 +61,10 @@ end
 --- Set buffer-local keymaps on a diff buffer.
 --- All keymaps are buffer-local to avoid polluting global keymap space.
 --- Modules are required lazily inside callbacks.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @param buf integer Buffer handle
 function M.set_keymaps(state, buf)
-  local cfg = require("gh-dash-diff").config.keymaps
+  local cfg = require("gh-review").config.keymaps
   local function map(lhs, rhs, desc)
     if lhs == false then return end
     vim.keymap.set("n", lhs, rhs, { buffer = buf, silent = true, desc = desc })
@@ -72,64 +72,64 @@ function M.set_keymaps(state, buf)
 
   -- File navigation
   map(cfg.next_file, function()
-    require("gh-dash-diff.ui.navigation").next_file(state)
+    require("gh-review.ui.navigation").next_file(state)
   end, "Next changed file")
 
   map(cfg.prev_file, function()
-    require("gh-dash-diff.ui.navigation").prev_file(state)
+    require("gh-review.ui.navigation").prev_file(state)
   end, "Previous changed file")
 
   -- Commit navigation
   map(cfg.toggle_review_mode, function()
-    require("gh-dash-diff.ui.navigation").toggle_review_mode(state)
+    require("gh-review.ui.navigation").toggle_review_mode(state)
   end, "Toggle file/commit review mode")
 
   map(cfg.next_commit, function()
-    require("gh-dash-diff.ui.navigation").next_commit(state)
+    require("gh-review.ui.navigation").next_commit(state)
   end, "Next commit")
 
   map(cfg.prev_commit, function()
-    require("gh-dash-diff.ui.navigation").prev_commit(state)
+    require("gh-review.ui.navigation").prev_commit(state)
   end, "Previous commit")
 
   -- Comment navigation
   map(cfg.next_comment, function()
-    require("gh-dash-diff.ui.comments").goto_next(buf)
+    require("gh-review.ui.comments").goto_next(buf)
   end, "Next comment")
 
   map(cfg.prev_comment, function()
-    require("gh-dash-diff.ui.comments").goto_prev(buf)
+    require("gh-review.ui.comments").goto_prev(buf)
   end, "Previous comment")
 
   -- Picker focus toggle
   map(cfg.toggle_picker, function()
-    require("gh-dash-diff.ui.navigation").toggle_picker(state)
+    require("gh-review.ui.navigation").toggle_picker(state)
   end, "Toggle file picker focus")
 
   -- Explorer sidebar toggle
   map(cfg.toggle_explorer, function()
-    require("gh-dash-diff.ui.picker").toggle(state)
+    require("gh-review.ui.picker").toggle(state)
   end, "Toggle explorer sidebar visibility")
 
   -- Comment actions
   map(cfg.add_comment, function()
-    require("gh-dash-diff.ui.input").open_comment(state)
+    require("gh-review.ui.input").open_comment(state)
   end, "Add inline comment")
 
   map(cfg.add_single_comment, function()
-    require("gh-dash-diff.ui.input").open_single_comment(state)
+    require("gh-review.ui.input").open_single_comment(state)
   end, "Post single comment immediately")
 
   map(cfg.reply_thread, function()
-    require("gh-dash-diff.ui.input").reply_thread(state)
+    require("gh-review.ui.input").reply_thread(state)
   end, "Reply to thread")
 
   map(cfg.delete_comment, function()
-    require("gh-dash-diff.ui.input").delete_pending(state)
+    require("gh-review.ui.input").delete_pending(state)
   end, "Delete pending comment")
 
   map(cfg.toggle_comments, function()
-    require("gh-dash-diff.ui.comments").toggle(state)
+    require("gh-review.ui.comments").toggle(state)
   end, "Toggle comment visibility")
 
   -- Toggle viewed
@@ -149,7 +149,7 @@ function M.set_keymaps(state, buf)
       vim.notify("Marked as viewed: " .. filename)
     end
     -- Refresh picker to update viewed indicators
-    pcall(require("gh-dash-diff.ui.picker").refresh, state)
+    pcall(require("gh-review.ui.picker").refresh, state)
     -- Update winbar to reflect new reviewed status
     local right_win = state.layout.right_win
     if right_win and vim.api.nvim_win_is_valid(right_win) then
@@ -159,11 +159,11 @@ function M.set_keymaps(state, buf)
     -- Persist to GitHub API in background
     local node_id = state.pr.node_id
     if node_id then
-      local files_mod = require("gh-dash-diff.gh.files")
+      local files_mod = require("gh-review.gh.files")
       local api_fn = now_viewed and files_mod.mark_file_as_viewed or files_mod.unmark_file_as_viewed
       api_fn(node_id, filename, function(err)
         if err then
-          vim.notify("gh-dash-diff: Failed to persist viewed state: " .. err, vim.log.levels.WARN)
+          vim.notify("gh-review: Failed to persist viewed state: " .. err, vim.log.levels.WARN)
         end
       end)
     end
@@ -171,12 +171,12 @@ function M.set_keymaps(state, buf)
 
   -- Review submission
   map(cfg.submit_review, function()
-    require("gh-dash-diff.ui.input").open_review_dialog(state)
+    require("gh-review.ui.input").open_review_dialog(state)
   end, "Submit review")
 
   -- Edit file at cursor
   map(cfg.edit_file, function()
-    require("gh-dash-diff").edit_file(state)
+    require("gh-review").edit_file(state)
   end, "Edit file at cursor line")
 
   -- Open PR in browser
@@ -191,13 +191,13 @@ function M.set_keymaps(state, buf)
 
   -- Close
   map(cfg.close, function()
-    require("gh-dash-diff").close()
+    require("gh-review").close()
   end, "Close PR review")
 
   -- Refresh
   map(cfg.refresh, function()
     local pr_number = state.pr.number
-    local main = require("gh-dash-diff")
+    local main = require("gh-review")
     main.close()
     main.open_pr(pr_number)
   end, "Refresh PR data")
@@ -208,13 +208,13 @@ end
 
 --- Show a floating window listing all PR review keybindings.
 --- Reads actual key values from config so user overrides are reflected.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 function M.show_help(state)
   -- Save diff window + cursor so help close returns to the exact position
   local diff_win  = vim.api.nvim_get_current_win()
   local saved_pos = vim.api.nvim_win_get_cursor(diff_win)
 
-  local cfg = require("gh-dash-diff").config.keymaps
+  local cfg = require("gh-review").config.keymaps
 
   -- Helper to display a key, replacing false/nil with "(disabled)"
   local function k(key)
@@ -307,17 +307,17 @@ end
 --- Load a file's diff into the side-by-side windows.
 --- Fetches base and PR content via git show in parallel, creates scratch
 --- buffers, enables diff mode, and sets buffer-local keymaps.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @param file GhFile
 --- @param idx number 1-based index into the current file list
 --- @param opts? {base_ref?: string, head_ref?: string, restore_line?: integer} Override git refs (for commit mode)
 function M.load_file(state, file, idx, opts)
-  local files_mod = require("gh-dash-diff.gh.files")
+  local files_mod = require("gh-review.gh.files")
   local root = state.repo.root
   local restore_line = opts and opts.restore_line
 
   if not root then
-    vim.notify("gh-dash-diff: git root not set in state", vim.log.levels.ERROR)
+    vim.notify("gh-review: git root not set in state", vim.log.levels.ERROR)
     return
   end
 
@@ -423,7 +423,7 @@ end
 
 --- Internal: create/swap diff buffers and enable diff mode.
 --- Separated from load_file so binary/loading paths can also use it.
---- @param state GhDashDiffState
+--- @param state GhReviewState
 --- @param file GhFile
 --- @param base_lines string[]
 --- @param head_lines string[]
@@ -434,7 +434,7 @@ function M._apply_buffers(state, file, base_lines, head_lines, idx)
   local ft = vim.filetype.match({ filename = file.filename }) or ""
 
   -- Config buffer name prefixes
-  local cfg = require("gh-dash-diff").config
+  local cfg = require("gh-review").config
   local base_prefix = cfg.buf_prefix and cfg.buf_prefix.base or "base://"
   local pr_prefix   = cfg.buf_prefix and cfg.buf_prefix.pr   or "pr://"
 
@@ -507,7 +507,7 @@ function M._apply_buffers(state, file, base_lines, head_lines, idx)
   M.set_keymaps(state, state.layout.right_buf)
 
   -- Render any existing comments for this file
-  local ok, comments_mod = pcall(require, "gh-dash-diff.ui.comments")
+  local ok, comments_mod = pcall(require, "gh-review.ui.comments")
   if ok then comments_mod.render_for_file(state, file.filename) end
 
   -- Focus the right (PR) diff window
@@ -521,7 +521,7 @@ function M._apply_buffers(state, file, base_lines, head_lines, idx)
   -- Sync picker cursor: in files mode, keep picker in sync with active file.
   -- In commit mode the picker shows commits, not files, so skip the sync.
   if state.pr.review_mode ~= "commits" then
-    local ok_p, picker_mod = pcall(require, "gh-dash-diff.ui.picker")
+    local ok_p, picker_mod = pcall(require, "gh-review.ui.picker")
     if ok_p then picker_mod.select_by_index(state, idx) end
   end
 end

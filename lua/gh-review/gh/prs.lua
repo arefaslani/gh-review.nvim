@@ -1,5 +1,5 @@
 local M = {}
-local exec = require("gh-dash-diff.gh.exec")
+local exec = require("gh-review.gh.exec")
 
 --- Module-level contributors cache keyed by "owner/repo".
 local _contributors_cache = {}

@@ -70,13 +70,13 @@ function M.open(prs, opts)
   opts = opts or {}
   local ok, Snacks = pcall(require, "snacks")
   if not ok then
-    vim.notify("gh-dash-diff requires snacks.nvim", vim.log.levels.ERROR)
+    vim.notify("gh-review requires snacks.nvim", vim.log.levels.ERROR)
     return
   end
 
   local owner = opts.owner
   local repo  = opts.repo
-  local prs_mod = require("gh-dash-diff.gh.prs")
+  local prs_mod = require("gh-review.gh.prs")
   local base_title = opts._base_title or opts.title or "GitHub PRs"
 
   local function get_title()
@@ -93,7 +93,7 @@ function M.open(prs, opts)
   local function toggle_filter(qualifier)
     if picker_ref then picker_ref:close() end
     if not (owner and repo) then
-      vim.notify("gh-dash-diff: owner/repo not available for search", vim.log.levels.WARN)
+      vim.notify("gh-review: owner/repo not available for search", vim.log.levels.WARN)
       return
     end
 
@@ -108,7 +108,7 @@ function M.open(prs, opts)
     local list_opts = search and { search = search } or nil
     prs_mod.list(owner, repo, list_opts, function(err, new_prs)
       if err then
-        vim.notify("gh-dash-diff: " .. err, vim.log.levels.ERROR)
+        vim.notify("gh-review: " .. err, vim.log.levels.ERROR)
         return
       end
       M.open(new_prs or {}, { owner = owner, repo = repo, _base_title = base_title })
@@ -132,7 +132,7 @@ function M.open(prs, opts)
     local list_opts = search and { search = search } or nil
     prs_mod.list(owner, repo, list_opts, function(err, new_prs)
       if err then
-        vim.notify("gh-dash-diff: " .. err, vim.log.levels.ERROR)
+        vim.notify("gh-review: " .. err, vim.log.levels.ERROR)
         return
       end
       M.open(new_prs or {}, { owner = owner, repo = repo, _base_title = base_title })
@@ -214,14 +214,14 @@ function M.open(prs, opts)
       if not item then return end
       _picker:close()
       _active_filters = {}
-      require("gh-dash-diff").open_pr(item.number)
+      require("gh-review").open_pr(item.number)
     end,
 
     actions = {
       refresh_prs = function(_picker)
         _picker:close()
         _active_filters = {}
-        require("gh-dash-diff").open_dash()
+        require("gh-review").open_dash()
       end,
     },
   })
@@ -241,7 +241,7 @@ function M.open(prs, opts)
       vim.keymap.set({ "n", "i" }, "<C-r>", function()
         if picker_ref then picker_ref:close() end
         _active_filters = {}
-        require("gh-dash-diff").open_dash()
+        require("gh-review").open_dash()
       end, o)
       vim.keymap.set({ "n", "i" }, "<C-a>", function()
         toggle_filter("author:@me")
