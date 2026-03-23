@@ -27,6 +27,7 @@ query($owner: String!, $name: String!, $number: Int!) {
           resolvedBy { login }
           comments(first: 100) {
             nodes {
+              id
               databaseId
               body
               author { login }
@@ -84,6 +85,7 @@ function M.fetch_threads(owner, repo, pr_number, callback)
       for _, c in ipairs((t.comments or {}).nodes or {}) do
         table.insert(comments, {
           id           = c.databaseId,
+          node_id      = c.id,
           body         = c.body,
           user         = { login = c.author and c.author.login or "unknown" },
           created_at   = c.createdAt,
@@ -334,6 +336,22 @@ function M.delete_comment(owner, repo, pr_number, comment_id, callback)
   }, nil, function(err, _)
     callback(err)
   end)
+end
+
+--- Update an existing pull request review comment body.
+--- @param comment_id string  The GraphQL node ID of the comment
+--- @param body string  New comment body
+--- @param callback fun(err: string|nil)
+function M.update_comment(comment_id, body, callback)
+  exec.graphql(
+    [[mutation($commentId: ID!, $body: String!) {
+      updatePullRequestReviewComment(input: {pullRequestReviewCommentId: $commentId, body: $body}) {
+        pullRequestReviewComment { id body }
+      }
+    }]],
+    { commentId = comment_id, body = body },
+    function(err, _) callback(err) end
+  )
 end
 
 --- Unresolve a review thread.

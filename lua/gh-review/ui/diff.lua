@@ -128,6 +128,10 @@ function M.set_keymaps(state, buf)
     require("gh-review.ui.input").delete_pending(state)
   end, "Delete pending comment")
 
+  map(cfg.edit_comment, function()
+    require("gh-review.ui.input").edit_comment(state)
+  end, "Edit comment under cursor")
+
   map(cfg.toggle_comments, function()
     require("gh-review.ui.comments").toggle(state)
   end, "Toggle comment visibility")
@@ -204,6 +208,22 @@ function M.set_keymaps(state, buf)
 
   -- Help
   map("?", function() M.show_help(state) end, "Show keybinding help")
+
+  -- Open URL under cursor / in comment at cursor line
+  vim.keymap.set("n", "gx", function()
+    local urls = require("gh-review.ui.comments").get_urls_at_cursor(buf)
+    if #urls == 0 then
+      -- Fallback: open cfile under cursor (netrw-style)
+      local word = vim.fn.expand("<cfile>")
+      if word and word ~= "" then vim.ui.open(word) end
+    elseif #urls == 1 then
+      vim.ui.open(urls[1])
+    else
+      vim.ui.select(urls, { prompt = "Open URL:" }, function(choice)
+        if choice then vim.ui.open(choice) end
+      end)
+    end
+  end, { buffer = buf, silent = true, desc = "Open URL" })
 end
 
 --- Show a floating window listing all PR review keybindings.
@@ -240,6 +260,7 @@ function M.show_help(state)
     string.format("  %-16s  Add inline comment (queued)", k(cfg.add_comment)),
     string.format("  %-16s  Post single comment (immediate)", k(cfg.add_single_comment)),
     string.format("  %-16s  Reply to thread (immediate)", k(cfg.reply_thread)),
+    string.format("  %-16s  Edit comment under cursor", k(cfg.edit_comment)),
     string.format("  %-16s  Toggle comment visibility", k(cfg.toggle_comments)),
     "",
     "  Review",

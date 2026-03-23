@@ -1,5 +1,8 @@
 local M = {}
 
+-- Maps buf -> line (0-based) -> list of URLs
+local _url_map = {}
+
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
@@ -72,23 +75,34 @@ local function wrap_line(text, max_width)
   return result
 end
 
---- Parse a single line into {text, hl} chunks, handling **bold** and `inline code`.
+--- Parse a single line into {text, hl} chunks, handling **bold**, `inline code`,
+--- [text](url) markdown links, and plain https?:// URLs.
 --- Does not handle nested formatting.
 --- @param text string
 --- @param default_hl string
---- @return table[] list of {text, hl} pairs
+--- @return table[] list of {text, hl} pairs, string[] list of URLs found
 local function parse_inline(text, default_hl)
   local chunks = {}
+  local urls = {}
   local i = 1
   while i <= #text do
     local b_start = text:find("%*%*", i)
     local c_start = text:find("`", i)
+    local l_start = text:find("%[", i)
+    local u_start = text:find("https?://", i)
+
+    -- Pick the earliest marker
     local next_pos, next_type
-    if b_start and (not c_start or b_start <= c_start) then
-      next_pos, next_type = b_start, "bold"
-    elseif c_start then
-      next_pos, next_type = c_start, "code"
+    local function check(pos, typ)
+      if pos and (not next_pos or pos < next_pos) then
+        next_pos, next_type = pos, typ
+      end
     end
+    check(l_start, "link")
+    check(u_start, "url")
+    check(b_start, "bold")
+    check(c_start, "code")
+
     if not next_pos then
       table.insert(chunks, { text:sub(i), default_hl })
       break
@@ -106,7 +120,7 @@ local function parse_inline(text, default_hl)
         table.insert(chunks, { "**", default_hl })
         i = next_pos + 2
       end
-    else
+    elseif next_type == "code" then
       local close = text:find("`", next_pos + 1)
       if close then
         local inner = text:sub(next_pos + 1, close - 1)
@@ -116,9 +130,46 @@ local function parse_inline(text, default_hl)
         table.insert(chunks, { "`", default_hl })
         i = next_pos + 1
       end
+    elseif next_type == "link" then
+      -- Try to match [text](url)
+      local text_close = text:find("%]%(", next_pos + 1)
+      if text_close then
+        local url_close = text:find("%)", text_close + 2)
+        if url_close then
+          local link_text = text:sub(next_pos + 1, text_close - 1)
+          local url = text:sub(text_close + 2, url_close - 1)
+          if #link_text > 0 then
+            table.insert(chunks, { link_text, "GhCommentLink" })
+          end
+          table.insert(chunks, { " ‹" .. url .. "›", "GhCommentLinkUrl" })
+          table.insert(urls, url)
+          i = url_close + 1
+        else
+          table.insert(chunks, { "[", default_hl })
+          i = next_pos + 1
+        end
+      else
+        table.insert(chunks, { "[", default_hl })
+        i = next_pos + 1
+      end
+    elseif next_type == "url" then
+      -- Plain URL: ends at whitespace or end of string
+      local url_end = text:find("[%s%)]", next_pos)
+      local url
+      if url_end then
+        url = text:sub(next_pos, url_end - 1)
+        table.insert(chunks, { url, "GhCommentLinkUrl" })
+        table.insert(urls, url)
+        i = url_end
+      else
+        url = text:sub(next_pos)
+        table.insert(chunks, { url, "GhCommentLinkUrl" })
+        table.insert(urls, url)
+        i = #text + 1
+      end
     end
   end
-  return chunks
+  return chunks, urls
 end
 
 --- Wrap a list of {text, hl} chunks into rows that fit max_width visible characters.
@@ -190,13 +241,14 @@ end
 --- @param is_resolved boolean
 --- @param is_reply boolean  true for reply comments (indented with ↳)
 --- @param max_width integer  available width for body text (excluding indent)
---- @return table[] list of virt_line rows (each is a list of {text, hl} chunks)
+--- @return table[] list of virt_line rows (each is a list of {text, hl} chunks), string[] URLs found
 local function comment_virt_lines(comment, is_resolved, is_reply, max_width)
   local body_hl = is_resolved and "GhCommentResolved" or "GhCommentBody"
   local author_hl = is_resolved and "GhCommentResolved" or "GhCommentAuthor"
   local date_hl = "GhCommentDate"
 
   local lines = {}
+  local all_urls = {}
 
   -- Author + date header
   local login = (comment.user and comment.user.login) or "unknown"
@@ -245,7 +297,8 @@ local function comment_virt_lines(comment, is_resolved, is_reply, max_width)
         table.insert(lines, { { body_indent .. seg, body_hl } })
       end
     else
-      local chunks = parse_inline(line, body_hl)
+      local chunks, line_urls = parse_inline(line, body_hl)
+      for _, u in ipairs(line_urls) do table.insert(all_urls, u) end
       if #chunks == 0 then
         table.insert(lines, { { body_indent, body_hl } })
       else
@@ -260,7 +313,7 @@ local function comment_virt_lines(comment, is_resolved, is_reply, max_width)
     end
   end
 
-  return lines
+  return lines, all_urls
 end
 
 -- ---------------------------------------------------------------------------
@@ -314,12 +367,15 @@ local function render_thread(buf, thread, ns_comments, ns_signs, ns_eol)
   end
 
   -- Comments
+  local thread_urls = {}
   for i, comment in ipairs(thread.comments or {}) do
     -- Blank line between comments (not before the first one)
     if i > 1 then
       table.insert(virt_lines, { { "", "Normal" } })
     end
-    for _, vline in ipairs(comment_virt_lines(comment, is_resolved, i > 1, win_width)) do
+    local comment_lines, comment_urls = comment_virt_lines(comment, is_resolved, i > 1, win_width)
+    for _, u in ipairs(comment_urls) do table.insert(thread_urls, u) end
+    for _, vline in ipairs(comment_lines) do
       table.insert(virt_lines, vline)
     end
   end
@@ -332,6 +388,15 @@ local function render_thread(buf, thread, ns_comments, ns_signs, ns_eol)
     virt_lines = virt_lines,
     virt_lines_above = false,
   })
+
+  -- Track URLs for gx
+  if #thread_urls > 0 then
+    if not _url_map[buf] then _url_map[buf] = {} end
+    _url_map[buf][row] = _url_map[buf][row] or {}
+    for _, u in ipairs(thread_urls) do
+      table.insert(_url_map[buf][row], u)
+    end
+  end
 
   -- Sign column indicator
   local sign_text = is_resolved and "" or ""
@@ -363,6 +428,7 @@ local function clear_buf(buf, ns_comments, ns_signs, ns_eol)
   vim.api.nvim_buf_clear_namespace(buf, ns_comments, 0, -1)
   vim.api.nvim_buf_clear_namespace(buf, ns_signs, 0, -1)
   vim.api.nvim_buf_clear_namespace(buf, ns_eol, 0, -1)
+  _url_map[buf] = nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -534,6 +600,18 @@ function M.update_pending(state)
   if idx >= 1 and idx <= #files then
     M.render_for_file(state, files[idx].filename)
   end
+end
+
+--- Return the list of URLs on the current cursor line for the given buffer.
+--- Used by the gx keymap in diff.lua.
+--- @param buf integer
+--- @return string[]
+function M.get_urls_at_cursor(buf)
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local row = cursor[1] - 1  -- 0-based
+  local buf_map = _url_map[buf]
+  if not buf_map then return {} end
+  return buf_map[row] or {}
 end
 
 --- Toggle comment virt_lines visibility.

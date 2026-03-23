@@ -21,6 +21,8 @@ local highlights = {
   GhCommentCode       = { link = "Special",             default = true },
   GhCommentBold       = { bold = true,                  default = true },
   GhCommentSuggestion = { link = "DiffAdd",             default = true },
+  GhCommentLink       = { link = "Underlined",          default = true },
+  GhCommentLinkUrl    = { link = "Comment",             default = true },
 
   -- Comment input floating window
   GhCommentInput    = { link = "NormalFloat",         default = true },

@@ -7,7 +7,8 @@ A Neovim plugin for reviewing GitHub Pull Requests with side-by-side diffs, inli
 - **PR browser** — Snacks picker with fuzzy search and composable filters (`author:@me`, `is:open`, etc.)
 - **Side-by-side diff** — Native Neovim `diffthis` with syntax highlighting
 - **File explorer** — Sidebar with directory tree grouping, diff stats, and viewed indicators
-- **Inline comments** — View, add, reply, and delete review comments as virtual text
+- **Inline comments** — View, add, edit, reply, and delete review comments as virtual text
+- **Markdown rendering** — Bold, inline code, suggestion blocks, and clickable links in comments
 - **Review submission** — Submit approvals, request changes, or comment from within Neovim
 - **Commit-by-commit review** — Toggle between full-PR and per-commit diff modes
 - **Viewed file tracking** — Mark files as reviewed, synced with GitHub's viewed state
@@ -81,9 +82,11 @@ A Neovim plugin for reviewing GitHub Pull Requests with side-by-side diffs, inli
 |-----|--------|
 | `<leader>cc` | Add inline comment (queued for review) |
 | `<leader>ca` | Post single comment immediately |
+| `<leader>ce` | Edit comment under cursor |
 | `<leader>cr` | Reply to thread |
 | `<leader>cd` | Delete pending comment |
 | `<leader>ct` | Toggle comment visibility |
+| `gx` | Open URL in comment under cursor |
 
 ### Review
 
@@ -138,6 +141,7 @@ require("gh-review").setup({
     add_comment        = "<leader>cc",
     add_single_comment = "<leader>ca",
     add_suggestion     = "<leader>cs",
+    edit_comment       = "<leader>ce",
     reply_thread       = "<leader>cr",
     delete_comment     = "<leader>cd",
     toggle_comments    = "<leader>ct",
@@ -175,6 +179,8 @@ All highlight groups use `default = true` so your colorscheme takes precedence.
 | `GhCommentBold` | bold | Bold text in comments |
 | `GhCommentSuggestion` | `DiffAdd` | Suggestion blocks |
 | `GhCommentResolved` | `Comment` | Resolved thread text |
+| `GhCommentLink` | `Underlined` | Link text in comments |
+| `GhCommentLinkUrl` | `Comment` | Link URL in comments |
 | `GhSignComment` | `DiagnosticSignInfo` | Comment sign |
 | `GhSignUnresolved` | `DiagnosticSignWarn` | Unresolved comment sign |
 | `GhSignPending` | `DiagnosticSignHint` | Pending comment sign |
