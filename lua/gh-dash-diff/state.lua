@@ -14,6 +14,7 @@ M.state = {
     current_commit_idx = 0,  -- 1-based index into commits
     review_mode = "files",   -- "files" or "commits"
     commit_files = {},       -- GhFile[] for the currently selected commit
+    commit_drill_down = false, -- true when picker shows commit's files (not commit list)
   },
 
   -- Review state
@@ -56,6 +57,7 @@ function M.reset()
       current_commit_idx = 0,
       review_mode = "files",
       commit_files = {},
+      commit_drill_down = false,
     },
     review = {
       pending_id = nil,

@@ -94,9 +94,11 @@ function M.toggle_review_mode(state)
     end
     state.pr.review_mode = "commits"
     state.pr.current_commit_idx = 0
+    state.pr.commit_drill_down = false
     vim.notify("gh-dash-diff: Commit review mode", vim.log.levels.INFO)
   else
     state.pr.review_mode = "files"
+    state.pr.commit_drill_down = false
     vim.notify("gh-dash-diff: File review mode", vim.log.levels.INFO)
   end
   require("gh-dash-diff.ui.picker").refresh_items(state)

@@ -125,6 +125,8 @@ local function load_item_diff(state, item)
         return
       end
       state.pr.commit_files = files or {}
+      state.pr.commit_drill_down = true
+      M.refresh_items(state)
       if #files > 0 then
         state.pr.current_idx = 1
         require("gh-dash-diff.ui.diff").load_file(
@@ -153,8 +155,13 @@ function M.open(state, config)
   end
 
   local is_commit_mode = state.pr.review_mode == "commits"
+  local is_drill_down = is_commit_mode and state.pr.commit_drill_down
   local items
-  if is_commit_mode then
+  if is_drill_down then
+    local file_map
+    items, file_map = build_file_items(state.pr.commit_files)
+    state.layout.picker_file_map = file_map
+  elseif is_commit_mode then
     items = build_commit_items(state.pr.commits)
   else
     local file_map
@@ -162,9 +169,21 @@ function M.open(state, config)
     state.layout.picker_file_map = file_map
   end
 
-  local title = is_commit_mode
-    and string.format("PR #%d — Commits", state.pr.number)
-    or  string.format("PR #%d", state.pr.number)
+  local title
+  if is_drill_down then
+    local commit = state.pr.commits[state.pr.current_commit_idx]
+    if commit then
+      local short_sha = commit.sha:sub(1, 7)
+      local msg = commit.message:match("^[^\n]*") or commit.message
+      title = string.format("PR #%d — %s: %s", state.pr.number, short_sha, msg)
+    else
+      title = string.format("PR #%d — Commit Files", state.pr.number)
+    end
+  elseif is_commit_mode then
+    title = string.format("PR #%d — Commits", state.pr.number)
+  else
+    title = string.format("PR #%d", state.pr.number)
+  end
 
   -- Direct function confirm: avoids the confirm→string→action resolution chain
   -- which can fall through to "jump" via the circular-reference guard in
@@ -177,6 +196,14 @@ function M.open(state, config)
 
   local function close_fn(_picker)
     require("gh-dash-diff").close()
+  end
+
+  local function back_fn(_picker)
+    if state.pr.commit_drill_down then
+      state.pr.commit_drill_down = false
+      state.pr.commit_files = {}
+      M.refresh_items(state)
+    end
   end
 
   state.layout.picker = Snacks.picker.pick({
@@ -236,17 +263,20 @@ function M.open(state, config)
 
     actions = {
       close_review = close_fn,
+      back_to_commits = back_fn,
     },
 
     win = {
       input = {
         keys = {
           ["q"] = "close_review",
+          ["<BS>"] = "back_to_commits",
         },
       },
       list = {
         keys = {
           ["q"] = "close_review",
+          ["<BS>"] = "back_to_commits",
         },
       },
     },
@@ -260,6 +290,14 @@ function M.open(state, config)
       load_item_diff(state, picker:current())
     end
 
+    local function go_back()
+      if state.pr.commit_drill_down then
+        state.pr.commit_drill_down = false
+        state.pr.commit_files = {}
+        M.refresh_items(state)
+      end
+    end
+
     local cfg = require("gh-dash-diff").config.keymaps
 
     -- List window keymaps
@@ -269,6 +307,7 @@ function M.open(state, config)
       vim.keymap.set("n", "<CR>", open_current, { buffer = buf, silent = true })
       vim.keymap.set("n", "o", open_current, { buffer = buf, silent = true })
       vim.keymap.set("n", "l", open_current, { buffer = buf, silent = true })
+      vim.keymap.set("n", "<BS>", go_back, { buffer = buf, silent = true })
       if cfg.toggle_explorer then
         vim.keymap.set("n", cfg.toggle_explorer, function()
           M.toggle(state)
@@ -297,6 +336,7 @@ function M.open(state, config)
     if input_win and input_win:valid() then
       local buf = input_win.buf
       vim.keymap.set({ "n", "i" }, "<CR>", open_current, { buffer = buf, silent = true })
+      vim.keymap.set({ "n", "i" }, "<BS>", go_back, { buffer = buf, silent = true })
       if cfg.toggle_explorer then
         vim.keymap.set("n", cfg.toggle_explorer, function()
           M.toggle(state)
