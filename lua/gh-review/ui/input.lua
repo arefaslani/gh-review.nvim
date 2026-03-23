@@ -123,7 +123,6 @@ local function open_input_float(title, callback, after_close)
     width    = width,
     height   = height,
     border   = "rounded",
-    filetype = "markdown",
     title    = title,
     zindex   = 50,
   })
@@ -592,7 +591,6 @@ function M.edit_comment(state)
         width    = math.min(64, math.max(40, vim.o.columns - 20)),
         height   = 8,
         border   = "rounded",
-        filetype = "markdown",
         title    = " Edit Comment ",
         zindex   = 50,
       })
