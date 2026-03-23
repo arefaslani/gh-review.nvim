@@ -124,7 +124,7 @@ local function parse_inline(text, default_hl)
       local close = text:find("`", next_pos + 1)
       if close then
         local inner = text:sub(next_pos + 1, close - 1)
-        if #inner > 0 then table.insert(chunks, { inner, "GhCommentCode" }) end
+        if #inner > 0 then table.insert(chunks, { "`" .. inner .. "`", "GhCommentCode" }) end
         i = close + 1
       else
         table.insert(chunks, { "`", default_hl })
@@ -278,10 +278,10 @@ local function comment_virt_lines(comment, is_resolved, is_reply, max_width)
       if not in_code then
         in_code = true
         is_suggest = line:match("^```suggestion") ~= nil
-        local fence_hl = is_suggest and "GhCommentSuggestion" or "GhCommentCode"
+        local fence_hl = is_suggest and "GhCommentSuggestion" or "GhCommentCodeFence"
         table.insert(lines, { { body_indent .. line, fence_hl } })
       else
-        local fence_hl = is_suggest and "GhCommentSuggestion" or "GhCommentCode"
+        local fence_hl = is_suggest and "GhCommentSuggestion" or "GhCommentCodeFence"
         table.insert(lines, { { body_indent .. line, fence_hl } })
         in_code = false
         is_suggest = false
