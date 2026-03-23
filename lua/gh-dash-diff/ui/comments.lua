@@ -40,12 +40,45 @@ local function buf_for_side(state, side)
   end
 end
 
+--- Split text into lines no longer than max_width, breaking at word boundaries.
+--- Hard-breaks when no space is found within max_width.
+--- @param text string
+--- @param max_width integer
+--- @return string[]
+local function wrap_line(text, max_width)
+  if max_width <= 0 or #text <= max_width then return { text } end
+  local result = {}
+  local s = text
+  while #s > max_width do
+    local break_at = nil
+    for i = max_width, 1, -1 do
+      if s:sub(i, i) == " " then
+        break_at = i
+        break
+      end
+    end
+    if break_at then
+      table.insert(result, s:sub(1, break_at - 1))
+      s = s:sub(break_at + 1)
+    else
+      -- Hard-break at max_width
+      table.insert(result, s:sub(1, max_width))
+      s = s:sub(max_width + 1)
+    end
+  end
+  if #s > 0 then
+    table.insert(result, s)
+  end
+  return result
+end
+
 --- Build virt_lines for a single comment.
 --- @param comment GhComment
 --- @param is_resolved boolean
 --- @param is_reply boolean  true for reply comments (indented with ↳)
+--- @param max_width integer  available width for body text (excluding indent)
 --- @return table[] list of virt_line rows (each is a list of {text, hl} chunks)
-local function comment_virt_lines(comment, is_resolved, is_reply)
+local function comment_virt_lines(comment, is_resolved, is_reply, max_width)
   local body_hl = is_resolved and "GhCommentResolved" or "GhCommentBody"
   local author_hl = is_resolved and "GhCommentResolved" or "GhCommentAuthor"
   local date_hl = "GhCommentDate"
@@ -70,8 +103,12 @@ local function comment_virt_lines(comment, is_resolved, is_reply)
   -- Body lines
   local body = comment.body or ""
   local body_indent = is_reply and "      " or "  "
+  local indent_width = #body_indent
+  local avail = math.max(20, max_width - indent_width)
   for _, line in ipairs(vim.split(body, "\n", { plain = true })) do
-    table.insert(lines, { { body_indent .. line, body_hl } })
+    for _, segment in ipairs(wrap_line(line, avail)) do
+      table.insert(lines, { { body_indent .. segment, body_hl } })
+    end
   end
 
   return lines
@@ -89,6 +126,13 @@ end
 --- @param ns_eol integer
 local function render_thread(buf, thread, ns_comments, ns_signs, ns_eol)
   if not vim.api.nvim_buf_is_valid(buf) then return end
+
+  -- Determine available width for comment text from the buffer's window.
+  local win_width = math.floor(vim.o.columns / 2)
+  local wins = vim.fn.win_findbuf(buf)
+  if wins and #wins > 0 then
+    win_width = vim.api.nvim_win_get_width(wins[1])
+  end
 
   -- Determine anchor line (1-based from GitHub; convert to 0-based for extmarks)
   local anchor_line = thread.line or thread.original_line
@@ -119,7 +163,7 @@ local function render_thread(buf, thread, ns_comments, ns_signs, ns_eol)
     if i > 1 then
       table.insert(virt_lines, { { "", "Normal" } })
     end
-    for _, vline in ipairs(comment_virt_lines(comment, is_resolved, i > 1)) do
+    for _, vline in ipairs(comment_virt_lines(comment, is_resolved, i > 1, win_width)) do
       table.insert(virt_lines, vline)
     end
   end
