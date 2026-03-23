@@ -1,5 +1,14 @@
 local M = {}
 
+--- Push the current file index onto the history stack (for <C-o> navigation).
+--- @param state GhReviewState
+local function push_history(state)
+  if state.pr.current_idx > 0 then
+    table.insert(state.pr.file_history, state.pr.current_idx)
+    state.pr.file_forward = {}  -- clear forward stack on new navigation
+  end
+end
+
 --- Navigate to the next changed file (wraps around).
 --- In commit mode, navigates within the current commit's files.
 --- @param state GhReviewState
@@ -10,6 +19,7 @@ function M.next_file(state)
   if #files == 0 then return end
   local idx = (state.pr.current_idx % #files) + 1
   if idx == state.pr.current_idx then return end
+  push_history(state)
   state.pr.current_idx = idx
   if state.pr.review_mode == "commits" then
     local commit = state.pr.commits[state.pr.current_commit_idx]
@@ -36,6 +46,7 @@ function M.prev_file(state)
   local idx = state.pr.current_idx - 1
   if idx < 1 then idx = #files end
   if idx == state.pr.current_idx then return end
+  push_history(state)
   state.pr.current_idx = idx
   if state.pr.review_mode == "commits" then
     local commit = state.pr.commits[state.pr.current_commit_idx]
@@ -49,6 +60,46 @@ function M.prev_file(state)
     require("gh-review.ui.picker").select_by_index(state, idx)
     require("gh-review.ui.diff").load_file(state, files[idx], idx)
   end
+end
+
+--- Go back to the previously viewed file (<C-o>).
+--- @param state GhReviewState
+function M.file_back(state)
+  local history = state.pr.file_history
+  if #history == 0 then return end
+  local files = state.pr.review_mode == "commits"
+    and state.pr.commit_files
+    or  state.pr.files
+  -- Push current to forward stack
+  if state.pr.current_idx > 0 then
+    table.insert(state.pr.file_forward, state.pr.current_idx)
+  end
+  local idx = table.remove(history)
+  state.pr.current_idx = idx
+  if state.pr.review_mode ~= "commits" then
+    require("gh-review.ui.picker").select_by_index(state, idx)
+  end
+  require("gh-review.ui.diff").load_file(state, files[idx], idx)
+end
+
+--- Go forward to the next file in history (<C-i>).
+--- @param state GhReviewState
+function M.file_forward(state)
+  local forward = state.pr.file_forward
+  if #forward == 0 then return end
+  local files = state.pr.review_mode == "commits"
+    and state.pr.commit_files
+    or  state.pr.files
+  -- Push current to history stack
+  if state.pr.current_idx > 0 then
+    table.insert(state.pr.file_history, state.pr.current_idx)
+  end
+  local idx = table.remove(forward)
+  state.pr.current_idx = idx
+  if state.pr.review_mode ~= "commits" then
+    require("gh-review.ui.picker").select_by_index(state, idx)
+  end
+  require("gh-review.ui.diff").load_file(state, files[idx], idx)
 end
 
 --- Toggle focus between the Snacks picker sidebar and the diff area.

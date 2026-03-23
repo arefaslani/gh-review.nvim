@@ -136,6 +136,42 @@ function M.set_keymaps(state, buf)
     require("gh-review.ui.comments").toggle(state)
   end, "Toggle comment visibility")
 
+  -- Resolve/unresolve thread
+  map(cfg.resolve_thread, function()
+    local file = state.pr.files[state.pr.current_idx]
+    if not file then return end
+    local cur_line = vim.api.nvim_win_get_cursor(0)[1]
+    local side = vim.api.nvim_get_current_win() == state.layout.left_win and "LEFT" or "RIGHT"
+    -- Find thread near cursor
+    local best, best_dist = nil, math.huge
+    for _, thread in ipairs(state.review.threads or {}) do
+      if thread.path == file.filename and (thread.side == side or thread.side == nil) then
+        local t_line = thread.line or thread.original_line or 0
+        local dist = math.abs(t_line - cur_line)
+        if dist <= 5 and dist < best_dist then
+          best, best_dist = thread, dist
+        end
+      end
+    end
+    if not best or not best.id then
+      vim.notify("gh-review: No thread found near cursor", vim.log.levels.WARN)
+      return
+    end
+    local reviews_mod = require("gh-review.gh.reviews")
+    local action = best.is_resolved and "unresolve" or "resolve"
+    local fn = best.is_resolved and reviews_mod.unresolve_thread or reviews_mod.resolve_thread
+    fn(best.id, function(err)
+      if err then
+        vim.notify("gh-review: Failed to " .. action .. ": " .. err, vim.log.levels.ERROR)
+        return
+      end
+      best.is_resolved = not best.is_resolved
+      vim.notify("gh-review: Thread " .. action .. "d", vim.log.levels.INFO)
+      local ok, cm = pcall(require, "gh-review.ui.comments")
+      if ok then pcall(cm.render_for_file, state, file.filename) end
+    end)
+  end, "Resolve/unresolve thread")
+
   -- Toggle viewed
   map(cfg.toggle_viewed, function()
     local file = state.pr.files[state.pr.current_idx]
@@ -209,9 +245,13 @@ function M.set_keymaps(state, buf)
   -- Help
   map("?", function() M.show_help(state) end, "Show keybinding help")
 
-  -- Disable jumplist navigation (scratch buffer URIs break <C-o>/<C-i>)
-  vim.keymap.set("n", "<C-o>", "<Nop>", { buffer = buf, silent = true })
-  vim.keymap.set("n", "<C-i>", "<Nop>", { buffer = buf, silent = true })
+  -- File history navigation (replaces jumplist which doesn't work with scratch buffers)
+  vim.keymap.set("n", "<C-o>", function()
+    require("gh-review.ui.navigation").file_back(state)
+  end, { buffer = buf, silent = true, desc = "Previous file (history)" })
+  vim.keymap.set("n", "<C-i>", function()
+    require("gh-review.ui.navigation").file_forward(state)
+  end, { buffer = buf, silent = true, desc = "Next file (history)" })
 
   -- Open URL under cursor / in comment at cursor line
   vim.keymap.set("n", "gx", function()
@@ -251,6 +291,7 @@ function M.show_help(state)
     "  " .. string.rep("─", 34),
     "  Navigation",
     string.format("  %-16s  Next / prev file", k(cfg.next_file) .. " / " .. k(cfg.prev_file)),
+    string.format("  %-16s  File back / forward", "<C-o> / <C-i>"),
     string.format("  %-16s  Next / prev hunk (built-in)", "]c / [c"),
     string.format("  %-16s  Next / prev comment", k(cfg.next_comment) .. " / " .. k(cfg.prev_comment)),
     string.format("  %-16s  Toggle file picker focus", k(cfg.toggle_picker)),
@@ -265,6 +306,7 @@ function M.show_help(state)
     string.format("  %-16s  Post single comment (immediate)", k(cfg.add_single_comment)),
     string.format("  %-16s  Reply to thread (immediate)", k(cfg.reply_thread)),
     string.format("  %-16s  Edit comment under cursor", k(cfg.edit_comment)),
+    string.format("  %-16s  Resolve / unresolve thread", k(cfg.resolve_thread)),
     string.format("  %-16s  Toggle comment visibility", k(cfg.toggle_comments)),
     "",
     "  Review",

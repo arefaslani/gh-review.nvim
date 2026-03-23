@@ -43,6 +43,7 @@ M.defaults = {
     reply_thread        = "<leader>cr",
     delete_comment      = "<leader>cd",
     edit_comment        = "<leader>ce",
+    resolve_thread      = "<leader>cx",
     toggle_comments     = "<leader>ct",
 
     -- Review

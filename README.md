@@ -66,6 +66,7 @@ A Neovim plugin for reviewing GitHub Pull Requests with side-by-side diffs, inli
 | Key | Action |
 |-----|--------|
 | `]f` / `[f` | Next / previous file |
+| `<C-o>` / `<C-i>` | File back / forward (history) |
 | `]c` / `[c` | Next / previous hunk (built-in) |
 | `]x` / `[x` | Next / previous comment |
 | `t` | Toggle file picker focus |
@@ -85,6 +86,7 @@ A Neovim plugin for reviewing GitHub Pull Requests with side-by-side diffs, inli
 | `<leader>ce` | Edit comment under cursor |
 | `<leader>cr` | Reply to thread |
 | `<leader>cd` | Delete pending comment |
+| `<leader>cx` | Resolve / unresolve thread |
 | `<leader>ct` | Toggle comment visibility |
 | `gx` | Open URL in comment under cursor |
 
@@ -144,6 +146,7 @@ require("gh-review").setup({
     edit_comment       = "<leader>ce",
     reply_thread       = "<leader>cr",
     delete_comment     = "<leader>cd",
+    resolve_thread     = "<leader>cx",
     toggle_comments    = "<leader>ct",
     toggle_viewed      = "<leader>cv",
     submit_review      = "<leader>rs",
