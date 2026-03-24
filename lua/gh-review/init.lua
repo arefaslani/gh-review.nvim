@@ -106,6 +106,8 @@ function M.open_pr(pr_number, open_opts)
             end
             -- If merge-base fails, fall back to baseRefOid (better than nothing)
 
+          -- Fire on_open callback (e.g. to close the PR picker loading state)
+          if open_opts.on_open then open_opts.on_open() end
           -- Open the review layout: Snacks sidebar + diff windows
           require("gh-review.ui").open(pr, files, {
             start_idx = open_opts.start_idx,
@@ -226,33 +228,48 @@ end
 function M.open_dash()
   if not M._initialized then M.setup({}) end
 
-  vim.notify("gh-review: Loading PRs…", vim.log.levels.INFO)
+  local repo_mod  = require("gh-review.gh.repo")
+  local prs_mod   = require("gh-review.gh.prs")
+  local pr_picker = require("gh-review.ui.pr_picker")
 
-  local repo_mod = require("gh-review.gh.repo")
-  local prs_mod  = require("gh-review.gh.prs")
+  -- Open the picker immediately in a loading state so the window appears at once
+  local picker = pr_picker.open(nil, { title = "PRs — loading…" })
 
   repo_mod.detect(nil, function(err, owner, name)
     if err then
       vim.notify("gh-review: " .. err, vim.log.levels.ERROR)
+      vim.schedule(function()
+        if picker and not picker.closed then picker:close() end
+      end)
       return
     end
 
     prs_mod.list(owner, name, nil, function(err2, prs)
       if err2 then
         vim.notify("gh-review: " .. err2, vim.log.levels.ERROR)
+        vim.schedule(function()
+          if picker and not picker.closed then picker:close() end
+        end)
         return
       end
 
       if not prs or #prs == 0 then
         vim.notify("gh-review: No open PRs found.", vim.log.levels.INFO)
+        vim.schedule(function()
+          if picker and not picker.closed then picker:close() end
+        end)
         return
       end
 
-      require("gh-review.ui.pr_picker").open(prs, {
-        title = string.format("PRs — %s/%s", owner, name),
-        owner = owner,
-        repo  = name,
-      })
+      vim.schedule(function()
+        if picker and not picker.closed and picker.gh_update then
+          picker.gh_update(prs, {
+            title = string.format("PRs — %s/%s", owner, name),
+            owner = owner,
+            repo  = name,
+          })
+        end
+      end)
     end)
   end)
 end

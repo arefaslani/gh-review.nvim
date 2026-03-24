@@ -64,7 +64,7 @@ local function build_items(prs)
 end
 
 --- Open a Snacks picker to browse PRs.
---- @param prs table[] List of PRs from gh/prs.lua
+--- @param prs table[]|nil List of PRs from gh/prs.lua, or nil for loading state
 --- @param opts? {title?: string, owner?: string, repo?: string, _base_title?: string}
 function M.open(prs, opts)
   opts = opts or {}
@@ -74,8 +74,8 @@ function M.open(prs, opts)
     return
   end
 
-  local owner = opts.owner
-  local repo  = opts.repo
+  -- Mutable context so filters still work after async owner/repo resolution
+  local ctx = { owner = opts.owner, repo = opts.repo }
   local prs_mod = require("gh-review.gh.prs")
   local base_title = opts._base_title or opts.title or "GitHub PRs"
 
@@ -88,61 +88,63 @@ function M.open(prs, opts)
   end
 
   local picker_ref = nil
+  local current_items  -- forward-declared; assigned below after helper fns
 
-  --- Toggle a single qualifier in the active filters and re-fetch PRs.
-  local function toggle_filter(qualifier)
-    if picker_ref then picker_ref:close() end
-    if not (owner and repo) then
+  --- Show a loading placeholder in the picker and refetch PRs.
+  local function reload_prs(list_opts)
+    if not (ctx.owner and ctx.repo) then
       vim.notify("gh-review: owner/repo not available for search", vim.log.levels.WARN)
       return
     end
+    current_items = { { idx = 1, text = "Loading PRs…", _loading = true, number = 0,
+      title = "Loading PRs…", author = "", icon = "…", stats = "", body = "", isDraft = false,
+      _pr = { number = 0, title = "Loading…", body = "",
+               headRefName = "?", baseRefName = "?", changedFiles = 0 } } }
+    if picker_ref and not picker_ref.closed then
+      picker_ref.title = base_title .. "  [loading…]"
+      picker_ref:refresh()
+    end
+    prs_mod.list(ctx.owner, ctx.repo, list_opts, function(err, new_prs)
+      if err then
+        vim.notify("gh-review: " .. err, vim.log.levels.ERROR)
+        return
+      end
+      current_items = build_items(new_prs or {})
+      if picker_ref and not picker_ref.closed then
+        picker_ref.title = get_title()
+        picker_ref:refresh()
+      end
+    end)
+  end
 
-    -- Toggle this qualifier
+  --- Toggle a single qualifier in the active filters and re-fetch PRs in-place.
+  local function toggle_filter(qualifier)
     if _active_filters[qualifier] then
       _active_filters[qualifier] = nil
     else
       _active_filters[qualifier] = true
     end
-
     local search = build_search()
-    local list_opts = search and { search = search } or nil
-    prs_mod.list(owner, repo, list_opts, function(err, new_prs)
-      if err then
-        vim.notify("gh-review: " .. err, vim.log.levels.ERROR)
-        return
-      end
-      M.open(new_prs or {}, { owner = owner, repo = repo, _base_title = base_title })
-    end)
+    reload_prs(search and { search = search } or nil)
   end
 
-  --- Replace all filters with a manual search query.
+  --- Replace all filters with a manual search query, refetching in-place.
   local function do_manual_search(query)
-    if picker_ref then picker_ref:close() end
-    if not (owner and repo) then return end
-
-    -- Parse query into individual qualifiers and set them as active filters
+    if not (ctx.owner and ctx.repo) then return end
     _active_filters = {}
     for word in query:gmatch("%S+") do
       if word:find(":") then
         _active_filters[word] = true
       end
     end
-
     local search = build_search()
-    local list_opts = search and { search = search } or nil
-    prs_mod.list(owner, repo, list_opts, function(err, new_prs)
-      if err then
-        vim.notify("gh-review: " .. err, vim.log.levels.ERROR)
-        return
-      end
-      M.open(new_prs or {}, { owner = owner, repo = repo, _base_title = base_title })
-    end)
+    reload_prs(search and { search = search } or nil)
   end
 
   -- Cached contributor logins for the current repo, populated asynchronously.
   local contributor_logins = {}
-  if owner and repo then
-    prs_mod.list_contributors(owner, repo, function(err, logins)
+  if ctx.owner and ctx.repo then
+    prs_mod.list_contributors(ctx.owner, ctx.repo, function(err, logins)
       if not err and logins then contributor_logins = logins end
     end)
   end
@@ -153,12 +155,19 @@ function M.open(prs, opts)
     return "Tip: " .. author_hint .. "  is:open  is:closed  review-requested:@me"
   end
 
-  local items = build_items(prs)
+  -- Assign the mutable items source (forward-declared above)
+  current_items = prs and build_items(prs) or {
+    { idx = 1, text = "Loading PRs…", _loading = true, number = 0,
+      title = "Loading PRs…", author = "", icon = "…", stats = "",
+      body = "", isDraft = false,
+      _pr = { number = 0, title = "Loading…", body = "",
+               headRefName = "?", baseRefName = "?", changedFiles = 0 } },
+  }
 
   picker_ref = Snacks.picker.pick({
     source    = "gh_prs",
     title     = get_title(),
-    items     = items,
+    finder    = function() return current_items end,
 
     layout = {
       preset  = "dropdown",
@@ -168,6 +177,9 @@ function M.open(prs, opts)
     },
 
     format = function(item, _picker)
+      if item._loading then
+        return { { "  Loading PRs…", "Comment" } }
+      end
       local num_hl  = "Special"
       local icon_hl = item.isDraft and "Comment"
         or (item.icon == REVIEW_ICONS.APPROVED and "GhStatAdd"
@@ -211,10 +223,22 @@ function M.open(prs, opts)
     end,
 
     confirm = function(_picker, item)
-      if not item then return end
-      _picker:close()
+      if not item or item._loading then return end
       _active_filters = {}
-      require("gh-review").open_pr(item.number)
+      -- Show a loading message in the picker while the diff view loads;
+      -- the picker is closed by the on_open callback once the view is ready.
+      current_items = { { idx = 1, text = "Opening PR #" .. item.number .. "…",
+        _loading = true, number = 0, title = "Opening PR #" .. item.number .. "…",
+        author = "", icon = "…", stats = "", body = "", isDraft = false,
+        _pr = { number = 0, title = "Opening…", body = "",
+                 headRefName = "?", baseRefName = "?", changedFiles = 0 } } }
+      picker_ref.title = "Opening PR #" .. item.number .. "…"
+      picker_ref:refresh()
+      require("gh-review").open_pr(item.number, {
+        on_open = function()
+          if picker_ref and not picker_ref.closed then picker_ref:close() end
+        end,
+      })
     end,
 
     actions = {
@@ -225,6 +249,25 @@ function M.open(prs, opts)
       end,
     },
   })
+
+  -- Expose an update function so open_dash can populate items after async fetch
+  if picker_ref then
+    picker_ref.gh_update = function(new_prs, new_opts)
+      new_opts = new_opts or {}
+      ctx.owner = new_opts.owner or ctx.owner
+      ctx.repo  = new_opts.repo  or ctx.repo
+      base_title = new_opts.title or base_title
+      current_items = build_items(new_prs or {})
+      picker_ref.title = get_title()
+      -- Start fetching contributors now that we have owner/repo
+      if ctx.owner and ctx.repo then
+        prs_mod.list_contributors(ctx.owner, ctx.repo, function(err, logins)
+          if not err and logins then contributor_logins = logins end
+        end)
+      end
+      picker_ref:refresh()
+    end
+  end
 
   -- Set raw keymaps on picker buffers (Snacks action resolution is unreliable for these).
   if picker_ref then
