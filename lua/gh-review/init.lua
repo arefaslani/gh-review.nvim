@@ -89,14 +89,22 @@ function M.open_pr(pr_number, open_opts)
         if err3 then vim.notify("gh-review: " .. err3, vim.log.levels.ERROR); return end
         State.pr.files = files
 
-        -- Fetch PR ref so head/base commits are available locally for `git show`.
-        -- Without this, git show {sha}:{path} silently fails when commits aren't
-        -- in the local repo, producing empty diff panes.
-        files_mod.fetch_ref("origin", "refs/pull/" .. pr_number .. "/head", root, function(fetch_err)
-          if fetch_err then
-            -- Non-fatal: commits may already be present (e.g. branch checked out locally)
-            vim.notify("gh-review: git fetch warning: " .. fetch_err, vim.log.levels.WARN)
-          end
+        -- Fetch both PR head and base refs so git show {sha}:{path} works.
+        -- Without this, commits not in the local repo produce empty diff panes.
+        local fetch_pending = 2
+        local function on_fetch_done()
+          fetch_pending = fetch_pending - 1
+          if fetch_pending > 0 then return end
+
+          -- Compute merge-base between base and head for correct PR diff.
+          -- Using baseRefOid directly would compare against the tip of the
+          -- target branch, showing unrelated changes merged into main since
+          -- the PR was created. The merge-base is where the branches diverged.
+          files_mod.merge_base(State.pr.base_sha, State.pr.head_sha, root, function(mb_err, merge_base_sha)
+            if not mb_err and merge_base_sha then
+              State.pr.base_sha = merge_base_sha
+            end
+            -- If merge-base fails, fall back to baseRefOid (better than nothing)
 
           -- Open the review layout: Snacks sidebar + diff windows
           require("gh-review.ui").open(pr, files, {
@@ -128,6 +136,23 @@ function M.open_pr(pr_number, open_opts)
           commits_mod.list(owner, name, pr_number, function(_, commits)
             State.pr.commits = commits or {}
           end)
+          end) -- merge_base
+        end -- on_fetch_done
+
+        -- Fetch PR head ref
+        files_mod.fetch_ref("origin", "refs/pull/" .. pr_number .. "/head", root, function(fetch_err)
+          if fetch_err then
+            vim.notify("gh-review: git fetch warning (head): " .. fetch_err, vim.log.levels.WARN)
+          end
+          on_fetch_done()
+        end)
+
+        -- Fetch base branch so baseRefOid is available locally
+        files_mod.fetch_ref("origin", pr.baseRefName, root, function(fetch_err)
+          if fetch_err then
+            vim.notify("gh-review: git fetch warning (base): " .. fetch_err, vim.log.levels.WARN)
+          end
+          on_fetch_done()
         end)
       end)
     end)
