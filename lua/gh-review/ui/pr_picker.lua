@@ -89,22 +89,36 @@ function M.open(prs, opts)
 
   local picker_ref = nil
   local current_items  -- forward-declared; assigned below after helper fns
+  local _last_search = ""  -- tracks last search sent to gh CLI
+  local _fetch_id    = 0   -- incremented on each fetch; used to discard stale responses
 
-  --- Show a loading placeholder in the picker and refetch PRs.
+  local function make_loading_item(text)
+    return { idx = 1, text = text, _loading = true, number = 0,
+      title = text, author = "", icon = "…", stats = "", body = "", isDraft = false,
+      _pr = { number = 0, title = text, body = "",
+               headRefName = "?", baseRefName = "?", changedFiles = 0 } }
+  end
+
+  --- Fetch PRs and update items in-place, showing a loading placeholder while waiting.
+  --- Also syncs filter.search so the statuscolumn reflects the active search.
   local function reload_prs(list_opts)
     if not (ctx.owner and ctx.repo) then
       vim.notify("gh-review: owner/repo not available for search", vim.log.levels.WARN)
       return
     end
-    current_items = { { idx = 1, text = "Loading PRs…", _loading = true, number = 0,
-      title = "Loading PRs…", author = "", icon = "…", stats = "", body = "", isDraft = false,
-      _pr = { number = 0, title = "Loading…", body = "",
-               headRefName = "?", baseRefName = "?", changedFiles = 0 } } }
+    local search = list_opts and list_opts.search or ""
+    _last_search = search
+    _fetch_id = _fetch_id + 1
+    local my_id = _fetch_id
+    current_items = { make_loading_item("Loading PRs…") }
     if picker_ref and not picker_ref.closed then
+      picker_ref.input.filter.search = search
+      picker_ref.input:update()
       picker_ref.title = base_title .. "  [loading…]"
       picker_ref:refresh()
     end
     prs_mod.list(ctx.owner, ctx.repo, list_opts, function(err, new_prs)
+      if my_id ~= _fetch_id then return end
       if err then
         vim.notify("gh-review: " .. err, vim.log.levels.ERROR)
         return
@@ -123,19 +137,6 @@ function M.open(prs, opts)
       _active_filters[qualifier] = nil
     else
       _active_filters[qualifier] = true
-    end
-    local search = build_search()
-    reload_prs(search and { search = search } or nil)
-  end
-
-  --- Replace all filters with a manual search query, refetching in-place.
-  local function do_manual_search(query)
-    if not (ctx.owner and ctx.repo) then return end
-    _active_filters = {}
-    for word in query:gmatch("%S+") do
-      if word:find(":") then
-        _active_filters[word] = true
-      end
     end
     local search = build_search()
     reload_prs(search and { search = search } or nil)
@@ -165,9 +166,34 @@ function M.open(prs, opts)
   }
 
   picker_ref = Snacks.picker.pick({
-    source    = "gh_prs",
-    title     = get_title(),
-    finder    = function() return current_items end,
+    source        = "gh_prs",
+    title         = get_title(),
+    supports_live = true,
+    live          = false,
+
+    -- In live mode (toggled with <C-g>) the input text becomes filter.search,
+    -- which is passed to gh CLI as a search query. In normal mode the input
+    -- does fuzzy matching on the already-loaded items.
+    finder = function(_opts, find_ctx)
+      local search = (find_ctx and find_ctx.filter and find_ctx.filter.search) or ""
+      if search ~= _last_search and picker_ref and ctx.owner and ctx.repo then
+        _last_search = search
+        _fetch_id = _fetch_id + 1
+        local my_id = _fetch_id
+        current_items = { make_loading_item("Loading PRs…") }
+        prs_mod.list(ctx.owner, ctx.repo, search ~= "" and { search = search } or nil,
+          function(err, new_prs)
+            if my_id ~= _fetch_id then return end
+            if err then vim.notify("gh-review: " .. err, vim.log.levels.ERROR); return end
+            current_items = build_items(new_prs or {})
+            if picker_ref and not picker_ref.closed then
+              picker_ref.title = get_title()
+              picker_ref:refresh()
+            end
+          end)
+      end
+      return current_items
+    end,
 
     layout = {
       preset  = "dropdown",
@@ -257,6 +283,8 @@ function M.open(prs, opts)
       ctx.owner = new_opts.owner or ctx.owner
       ctx.repo  = new_opts.repo  or ctx.repo
       base_title = new_opts.title or base_title
+      _fetch_id = _fetch_id + 1  -- discard any in-flight live searches
+      _last_search = ""
       current_items = build_items(new_prs or {})
       picker_ref.title = get_title()
       -- Start fetching contributors now that we have owner/repo
@@ -271,14 +299,6 @@ function M.open(prs, opts)
 
   -- Set raw keymaps on picker buffers (Snacks action resolution is unreliable for these).
   if picker_ref then
-    local function get_input_query()
-      local input_win = picker_ref.layout and picker_ref.layout.wins and picker_ref.layout.wins.input
-      if input_win and input_win:valid() then
-        return vim.api.nvim_buf_get_lines(input_win.buf, 0, -1, false)[1] or ""
-      end
-      return ""
-    end
-
     local function set_filter_keys(buf)
       local o = { buffer = buf, silent = true }
       vim.keymap.set({ "n", "i" }, "<C-r>", function()
@@ -299,18 +319,11 @@ function M.open(prs, opts)
         toggle_filter("review-requested:@me")
       end, o)
       vim.keymap.set({ "n", "i" }, "<C-g>", function()
-        -- First try reading from the picker input (user may have typed a query)
-        local query = get_input_query()
-        if query ~= "" and query:find(":") then
-          do_manual_search(query)
-          return
+        if not picker_ref.opts.live then
+          -- Pre-populate search with active filters so they're editable in live mode
+          picker_ref.input.filter.search = build_search() or ""
         end
-        -- Otherwise prompt for a manual search query
-        vim.ui.input({ prompt = "Search qualifiers (e.g. author:user is:open): " }, function(input)
-          if input and input ~= "" then
-            do_manual_search(input)
-          end
-        end)
+        require("snacks.picker.actions").toggle_live(picker_ref)
       end, o)
     end
 
