@@ -4,7 +4,7 @@ A Neovim plugin for reviewing GitHub Pull Requests with side-by-side diffs, inli
 
 ## Features
 
-- **PR browser** — Snacks picker with fuzzy search and composable filters (`author:@me`, `is:open`, etc.)
+- **PR browser** — Snacks picker with fuzzy search, one-key composable filters, and a live search mode for arbitrary GitHub qualifiers
 - **Side-by-side diff** — Native Neovim `diffthis` with syntax highlighting
 - **File explorer** — Sidebar with directory tree grouping, diff stats, and viewed indicators
 - **Inline comments** — View, add, edit, reply, and delete review comments as virtual text
@@ -58,8 +58,15 @@ A Neovim plugin for reviewing GitHub Pull Requests with side-by-side diffs, inli
 | `<C-o>` | Toggle `is:open` filter |
 | `<C-x>` | Toggle `is:closed` filter |
 | `<C-n>` | Toggle `review-requested:@me` filter |
-| `<C-g>` | Manual search query (any GitHub qualifier) |
+| `<C-g>` | Toggle live search mode |
 | `<C-r>` | Refresh / clear filters |
+
+The picker has two input modes:
+
+- **Fuzzy mode** (default) — typing filters the already-loaded list locally. Any active search query is shown as a statuscolumn prefix before the `>` prompt.
+- **Live mode** (`<C-g>`) — the input is sent directly to `gh pr list --search` on each keystroke, re-querying GitHub in real time. Supports any [GitHub search qualifier](https://docs.github.com/en/search-github/searching-on-github/searching-issues-and-pull-requests) (e.g. `author:@me is:open label:bug`). Pressing `<C-g>` again returns to fuzzy mode.
+
+When entering live mode, any active shortcut filters (`<C-a>` etc.) are pre-populated into the input so you can inspect and edit them. All fetches happen in-place — the picker stays open and shows a loading indicator while results arrive.
 
 ### Diff View
 
