@@ -513,9 +513,19 @@ function M.delete_pending(state)
       end
     end
 
-    -- Only one candidate — delete directly without a dialog
+    local function confirm_delete(candidate)
+      vim.ui.select({ "Yes", "No" }, {
+        prompt = "Delete comment? " .. candidate.label,
+      }, function(choice)
+        if choice == "Yes" then
+          do_delete(candidate)
+        end
+      end)
+    end
+
+    -- Only one candidate — confirm and delete
     if #candidates == 1 then
-      do_delete(candidates[1])
+      confirm_delete(candidates[1])
       return
     end
 
@@ -574,7 +584,7 @@ function M.delete_pending(state)
     for i = 1, math.min(#candidates, 9) do
       vim.keymap.set("n", tostring(i), function()
         close_dialog()
-        do_delete(candidates[i])
+        confirm_delete(candidates[i])
       end, o)
     end
   end)
