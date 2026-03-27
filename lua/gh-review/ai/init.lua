@@ -135,19 +135,48 @@ local function open_streaming_float(title, height, state)
   return append_text
 end
 
---- Show an EOL loading indicator. Returns a cancel function.
+--- Show an animated EOL loading indicator with a spinner.
+--- Returns a table with :update(text) to change the message and :stop() to remove it.
 local function show_loading(buf, ns, text)
-  if not buf or not vim.api.nvim_buf_is_valid(buf) then return function() end end
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return { update = function() end, stop = function() end }
+  end
+
+  local frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+  local frame_idx = 1
+  local current_text = text
   local id = vim.api.nvim_buf_set_extmark(buf, ns, 0, 0, {
-    virt_text     = { { "  " .. text, "Comment" } },
+    virt_text     = { { "  " .. frames[1] .. " " .. text, "Comment" } },
     virt_text_pos = "eol",
     priority      = 100,
   })
-  return function()
-    if vim.api.nvim_buf_is_valid(buf) then
-      pcall(vim.api.nvim_buf_del_extmark, buf, ns, id)
+
+  local timer = vim.uv.new_timer()
+  timer:start(80, 80, vim.schedule_wrap(function()
+    if not vim.api.nvim_buf_is_valid(buf) then
+      timer:stop(); timer:close()
+      return
     end
-  end
+    frame_idx = (frame_idx % #frames) + 1
+    pcall(vim.api.nvim_buf_set_extmark, buf, ns, 0, 0, {
+      id            = id,
+      virt_text     = { { "  " .. frames[frame_idx] .. " " .. current_text, "Comment" } },
+      virt_text_pos = "eol",
+      priority      = 100,
+    })
+  end))
+
+  return {
+    update = function(new_text)
+      current_text = new_text
+    end,
+    stop = function()
+      timer:stop(); timer:close()
+      if vim.api.nvim_buf_is_valid(buf) then
+        pcall(vim.api.nvim_buf_del_extmark, buf, ns, id)
+      end
+    end,
+  }
 end
 
 --- Word-wrap text to fit within a given display width.
@@ -233,6 +262,18 @@ function M.explain_selection(state, buf)
   table.insert(_active, h)
 end
 
+--- Human-readable label for a context tool call.
+local function tool_label(name, input)
+  if name == "read_repo_file" then
+    return "reading " .. (input.path or "file") .. "…"
+  elseif name == "get_file_history" then
+    return "checking history of " .. (input.path or "file") .. "…"
+  elseif name == "list_directory" then
+    return "listing " .. (input.path or "directory") .. "…"
+  end
+  return name .. "…"
+end
+
 --- Run a multi-turn request loop: sends the initial request and, if the model
 --- calls a context tool (get_file_history, read_repo_file, list_directory),
 --- executes it locally, appends the tool result, and re-sends until the model
@@ -241,9 +282,10 @@ end
 --- @param messages table[]      initial messages array (mutated in-place)
 --- @param tools table[]         all tool definitions (context + submit_findings)
 --- @param max_rounds integer    safety cap on context-tool round-trips
+--- @param on_progress fun(text: string)|nil  called when a context tool is invoked
 --- @param callback fun(err: string|nil, result: table|nil)
 --- @return {cancel: fun()}
-local function analyze_loop(req_opts, messages, tools, max_rounds, callback)
+local function analyze_loop(req_opts, messages, tools, max_rounds, on_progress, callback)
   local client  = require("gh-review.ai.client")
   local context = require("gh-review.ai.context")
 
@@ -273,6 +315,10 @@ local function analyze_loop(req_opts, messages, tools, max_rounds, callback)
 
       -- Context tool → execute locally, append result, loop
       if result.type == "tool_use" then
+        if on_progress then
+          on_progress(tool_label(result.name, result.input or {}))
+        end
+
         local tool_result = context.execute_tool(result.name, result.input)
 
         -- Anthropic multi-turn: assistant content (tool_use) then user content (tool_result)
@@ -342,7 +388,7 @@ function M.analyze_file(state)
   end
 
   local ns = state.ns.ai_findings
-  local cancel_loading = show_loading(right_buf, ns, "AI: analyzing " .. file.filename .. "…")
+  local loading = show_loading(right_buf, ns, "AI: analyzing " .. file.filename .. "…")
   vim.notify("gh-review AI: analyzing " .. file.filename .. "…", vim.log.levels.INFO)
 
   -- Upfront context (cheap: git log + imports + directory listing)
@@ -386,10 +432,15 @@ function M.analyze_file(state)
 
   local messages = { { role = "user", content = user_msg } }
 
+  -- Progress callback: update the spinner text when the AI calls a context tool
+  local on_progress = function(text)
+    loading.update("AI: " .. text)
+  end
+
   -- Forward-declare so the callback can reference h
   local h
-  h = analyze_loop(req_opts, messages, tools, max_rounds, function(err, result)
-    cancel_loading()
+  h = analyze_loop(req_opts, messages, tools, max_rounds, on_progress, function(err, result)
+    loading.stop()
     _remove_handle(h)
 
     if err then
