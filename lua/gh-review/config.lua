@@ -86,6 +86,11 @@ M.defaults = {
     -- When false, all AI features use a single buffered request instead of SSE.
     streaming        = true,
     max_tokens       = 4096,
+    -- context_level: controls how much repository context the AI receives.
+    --   "minimal"  — only the diff and file content (cheapest)
+    --   "standard" — + git history, imports, directory structure (~$0.001 extra per call)
+    --   "full"     — standard + on-demand tool use to read related files/types
+    context_level    = "standard",
     keymaps = {
       explain_selection = "<leader>ae",   -- explain visual selection or current line
       analyze_file      = "<leader>aa",   -- analyze current file diff for issues

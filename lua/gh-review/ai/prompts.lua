@@ -60,9 +60,17 @@ end
 --- @param base_lines string[]
 --- @param head_lines string[]
 --- @param threads GhThread[]  existing threads on this file (for dedup)
+--- @param upfront_context? string  optional repo context (git history, imports, etc.)
 --- @return string
-function M.analyze_context(file, base_lines, head_lines, threads)
+function M.analyze_context(file, base_lines, head_lines, threads, upfront_context)
   local parts = {}
+
+  -- Upfront repo context (cheap, ~50-300 tokens)
+  if upfront_context and upfront_context ~= "" then
+    table.insert(parts, "Repository context:")
+    table.insert(parts, upfront_context)
+    table.insert(parts, "")
+  end
 
   table.insert(parts, string.format(
     "File: %s  [status: %s, +%d -%d lines]",

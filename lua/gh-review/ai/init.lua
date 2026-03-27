@@ -233,12 +233,91 @@ function M.explain_selection(state, buf)
   table.insert(_active, h)
 end
 
+--- Run a multi-turn request loop: sends the initial request and, if the model
+--- calls a context tool (get_file_history, read_repo_file, list_directory),
+--- executes it locally, appends the tool result, and re-sends until the model
+--- calls submit_findings or we exceed max_rounds.
+--- @param req_opts table        base request opts (model, system, api_key, …)
+--- @param messages table[]      initial messages array (mutated in-place)
+--- @param tools table[]         all tool definitions (context + submit_findings)
+--- @param max_rounds integer    safety cap on context-tool round-trips
+--- @param callback fun(err: string|nil, result: table|nil)
+--- @return {cancel: fun()}
+local function analyze_loop(req_opts, messages, tools, max_rounds, callback)
+  local client  = require("gh-review.ai.client")
+  local context = require("gh-review.ai.context")
+
+  -- Mutable handle so the outer cancel always targets the current in-flight request
+  local handle = { cancel = function() end }
+
+  local function do_round(round)
+    if round > max_rounds then
+      callback("AI exceeded maximum tool-call rounds (" .. max_rounds .. ")", nil)
+      return
+    end
+
+    local h = client.request(vim.tbl_extend("force", req_opts, {
+      messages = messages,
+      tools    = tools,
+    }), function(err, result)
+      if err then
+        callback(err, nil)
+        return
+      end
+
+      -- Terminal tool: submit_findings → we're done
+      if result.type == "tool_use" and result.name == "submit_findings" then
+        callback(nil, result)
+        return
+      end
+
+      -- Context tool → execute locally, append result, loop
+      if result.type == "tool_use" then
+        local tool_result = context.execute_tool(result.name, result.input)
+
+        -- Anthropic multi-turn: assistant content (tool_use) then user content (tool_result)
+        table.insert(messages, {
+          role    = "assistant",
+          content = { {
+            type  = "tool_use",
+            id    = result.id,
+            name  = result.name,
+            input = result.input,
+          } },
+        })
+        table.insert(messages, {
+          role    = "user",
+          content = { {
+            type         = "tool_result",
+            tool_use_id  = result.id,
+            content      = tool_result,
+          } },
+        })
+
+        do_round(round + 1)
+        return
+      end
+
+      -- Unexpected text response (shouldn't happen with tool_choice=any)
+      callback("Unexpected non-tool response from AI", nil)
+    end)
+
+    handle.cancel = h.cancel
+  end
+
+  do_round(1)
+  return handle
+end
+
 --- Analyze the current file diff for bugs, security issues, and performance problems.
 --- Results are rendered as virt_lines in the diff buffers using the ai_findings namespace.
 --- @param state GhReviewState
 function M.analyze_file(state)
-  local client  = require("gh-review.ai.client")
   local prompts = require("gh-review.ai.prompts")
+  local context = require("gh-review.ai.context")
+
+  local cfg = ai_cfg()
+  local ctx_level = cfg.context_level or "standard"
 
   local file = state.pr.files[state.pr.current_idx]
   if not file then
@@ -266,20 +345,50 @@ function M.analyze_file(state)
   local cancel_loading = show_loading(right_buf, ns, "AI: analyzing " .. file.filename .. "…")
   vim.notify("gh-review AI: analyzing " .. file.filename .. "…", vim.log.levels.INFO)
 
-  local user_msg = prompts.analyze_context(file, base_lines, head_lines, file_threads)
+  -- Upfront context (cheap: git log + imports + directory listing)
+  local upfront = nil
+  if ctx_level == "standard" or ctx_level == "full" then
+    upfront = context.build_upfront_context(file.filename, head_lines)
+  end
+
+  local user_msg = prompts.analyze_context(file, base_lines, head_lines, file_threads, upfront)
+
+  -- Build tool list: always include submit_findings; add context tools for "full"
+  local tools = { prompts.ANALYZE_TOOL }
+  local max_rounds = 1
+  if ctx_level == "full" then
+    for _, t in ipairs(context.CONTEXT_TOOLS) do
+      table.insert(tools, t)
+    end
+    max_rounds = 5  -- allow up to 5 context-tool round-trips
+  end
 
   local opts = client_opts()
-  local h = client.request({
+  -- Extend system prompt when context tools are available
+  local system_prompt = prompts.REVIEWER_SYSTEM
+  if ctx_level == "full" then
+    system_prompt = system_prompt
+      .. "\n\nYou have tools to explore the repository (get_file_history, read_repo_file, list_directory)."
+      .. " Use them when you need more context to understand the change — for example, to check type"
+      .. " definitions, related functions, or recent history of a file. Once you have enough context,"
+      .. " call submit_findings. Aim for at most 2-3 tool calls to keep costs low."
+  end
+
+  local req_opts = {
     model       = model("analysis"),
-    system      = prompts.REVIEWER_SYSTEM,
-    messages    = { { role = "user", content = user_msg } },
-    tools       = { prompts.ANALYZE_TOOL },
+    system      = system_prompt,
     api_key_env = opts.api_key_env,
     api_key     = opts.api_key,
     base_url    = opts.base_url,
     format      = opts.format,
     streaming   = opts.streaming,
-  }, function(err, result)
+  }
+
+  local messages = { { role = "user", content = user_msg } }
+
+  -- Forward-declare so the callback can reference h
+  local h
+  h = analyze_loop(req_opts, messages, tools, max_rounds, function(err, result)
     cancel_loading()
     _remove_handle(h)
 

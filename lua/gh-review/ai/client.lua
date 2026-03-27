@@ -46,7 +46,23 @@ local function build_curl_args(opts, api_key, streaming, tmpfile)
   }
   -- system and tools are format-specific; set Anthropic defaults here,
   -- overridden below for other formats.
-  if opts.system then body.system = opts.system end
+  if opts.system then
+    -- Prompt caching: for the Anthropic format, wrap system in a content-block
+    -- array with cache_control so repeated calls within 5 min pay ~90 % less.
+    if format == "anthropic" then
+      local sys_text = opts.system
+      if type(sys_text) == "string" then
+        body.system = {
+          { type = "text", text = sys_text, cache_control = { type = "ephemeral" } },
+        }
+      else
+        -- Already an array (caller built it manually) — pass through
+        body.system = sys_text
+      end
+    else
+      body.system = opts.system
+    end
+  end
   if opts.tools and format ~= "openai" then
     body.tools       = opts.tools
     body.tool_choice = { type = "any" }
@@ -418,7 +434,7 @@ function M.request(opts, callback)
               callback("Failed to parse tool arguments: " .. args_str:sub(1, 200), nil)
               return
             end
-            callback(nil, { type = "tool_use", name = name, input = input })
+            callback(nil, { type = "tool_use", name = name, input = input, id = tc.id })
             return
           end
           local content = msg.content
@@ -448,7 +464,7 @@ function M.request(opts, callback)
         local text_result = nil
         for _, block in ipairs(data.content or {}) do
           if block.type == "tool_use" then
-            callback(nil, { type = "tool_use", name = block.name, input = block.input })
+            callback(nil, { type = "tool_use", name = block.name, input = block.input, id = block.id })
             return
           elseif block.type == "text" and not text_result then
             text_result = { type = "text", text = block.text }
