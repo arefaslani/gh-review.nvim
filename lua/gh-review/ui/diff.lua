@@ -114,14 +114,24 @@ function M.set_keymaps(state, buf)
     require("gh-review.ui.picker").toggle(state)
   end, "Toggle explorer sidebar visibility")
 
-  -- Comment actions
-  map(cfg.add_comment, function()
-    require("gh-review.ui.input").open_comment(state)
-  end, "Add inline comment")
+  -- Comment actions (normal + visual for multi-line selection)
+  if cfg.add_comment and cfg.add_comment ~= false then
+    local comment_fn = function()
+      require("gh-review.ui.input").open_comment(state)
+    end
+    vim.keymap.set({ "n", "v" }, cfg.add_comment, comment_fn, {
+      buffer = buf, silent = true, desc = "Add inline comment",
+    })
+  end
 
-  map(cfg.add_single_comment, function()
-    require("gh-review.ui.input").open_single_comment(state)
-  end, "Post single comment immediately")
+  if cfg.add_single_comment and cfg.add_single_comment ~= false then
+    local single_fn = function()
+      require("gh-review.ui.input").open_single_comment(state)
+    end
+    vim.keymap.set({ "n", "v" }, cfg.add_single_comment, single_fn, {
+      buffer = buf, silent = true, desc = "Post single comment immediately",
+    })
+  end
 
   map(cfg.reply_thread, function()
     require("gh-review.ui.input").reply_thread(state)

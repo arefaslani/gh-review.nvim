@@ -174,6 +174,21 @@ end
 -- ---------------------------------------------------------------------------
 
 --- Open a floating window for a new inline comment on the current cursor line.
+--- Capture the visual selection range, exit visual mode, and return start/end lines.
+--- In normal mode returns nil (single-line comment on cursor line).
+--- @return integer|nil start_line, integer|nil end_line
+local function capture_visual_range()
+  local mode = vim.fn.mode()
+  if mode ~= "v" and mode ~= "V" and mode ~= "\22" then
+    return nil, nil
+  end
+  local v_start = vim.fn.line("v")
+  local v_end   = vim.fn.line(".")
+  if v_start > v_end then v_start, v_end = v_end, v_start end
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "nx", false)
+  return v_start, v_end
+end
+
 --- The comment is stored as PENDING — not sent to GitHub until `open_review_dialog`.
 --- @param state GhReviewState
 function M.open_comment(state)
@@ -183,11 +198,15 @@ function M.open_comment(state)
     return
   end
 
+  -- Detect multi-line selection before anything else
+  local sel_start, sel_end = capture_visual_range()
+
   -- Capture position before the float changes the current window
   local saved_win = vim.api.nvim_get_current_win()
   local saved_pos = vim.api.nvim_win_get_cursor(saved_win)
   local side = get_side(state)
-  local line = saved_pos[1]
+  local line = sel_end or saved_pos[1]
+  local start_line = sel_start and sel_start < line and sel_start or nil
   local path = comment_path(file, side)
 
   open_input_float(" Add Comment ", function(body)
@@ -196,6 +215,8 @@ function M.open_comment(state)
       line       = line,
       side       = side,
       body       = body,
+      start_line = start_line,
+      start_side = start_line and side or nil,
       is_suggestion = false,
       created_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -226,11 +247,15 @@ function M.open_single_comment(state)
     return
   end
 
+  -- Detect multi-line selection before anything else
+  local sel_start, sel_end = capture_visual_range()
+
   -- Capture position before the float changes the current window
   local saved_win = vim.api.nvim_get_current_win()
   local saved_pos = vim.api.nvim_win_get_cursor(saved_win)
   local side = get_side(state)
-  local line = saved_pos[1]
+  local line = sel_end or saved_pos[1]
+  local start_line = sel_start and sel_start < line and sel_start or nil
   local path = comment_path(file, side)
 
   open_input_float(" Post Comment (immediate) ", function(body)
@@ -244,6 +269,8 @@ function M.open_single_comment(state)
       line       = line,
       side       = side,
       body       = body,
+      start_line = start_line,
+      start_side = start_line and side or nil,
     }, function(err, _)
       if err then
         vim.notify("gh-review: Comment failed: " .. err, vim.log.levels.ERROR)

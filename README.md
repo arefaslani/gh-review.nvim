@@ -89,8 +89,8 @@ When entering live mode, any active shortcut filters (`<C-a>` etc.) are pre-popu
 
 | Key | Action |
 |-----|--------|
-| `<leader>cc` | Add inline comment (queued for review) |
-| `<leader>ca` | Post single comment immediately |
+| `<leader>cc` | Add inline comment (queued for review); visual mode for multi-line |
+| `<leader>ca` | Post single comment immediately; visual mode for multi-line |
 | `<leader>ce` | Edit comment under cursor |
 | `<leader>cr` | Reply to thread |
 | `<leader>cd` | Delete pending comment |
