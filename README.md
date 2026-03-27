@@ -13,7 +13,7 @@ A Neovim plugin for reviewing GitHub Pull Requests with side-by-side diffs, inli
 - **Commit-by-commit review** — Toggle between full-PR and per-commit diff modes
 - **Viewed file tracking** — Mark files as reviewed, synced with GitHub's viewed state
 - **Edit and resume** — Jump to editing a file, then resume the review where you left off
-- **AI-assisted review** — Explain code, analyze files for issues, draft comments, and summarize PRs using Claude (requires API key; works with any Anthropic-compatible endpoint)
+- **AI-assisted review** — Explain code, analyze files for issues, draft comments, summarize PRs, and chat with full repo context using Claude (requires API key; works with any Anthropic-compatible endpoint). Prompt caching reduces repeated-call costs by ~90%.
 
 ## Requirements
 
@@ -142,6 +142,8 @@ When entering live mode, any active shortcut filters (`<C-a>` etc.) are pre-popu
 
 The chat maintains full conversation history for the current PR — ask follow-up questions, request clarifications, or dig into specific changes. History resets automatically when you open a different PR.
 
+The AI chat is context-aware: it knows which file you were viewing when you opened it, has the full content of that file, and sees the unified diffs for all changed files in the PR. In `"full"` context mode, the AI can also explore the repository on-demand — reading related files, checking git history, and browsing directory structure — to answer deeper questions.
+
 When triggered from a visual selection (`<leader>ai` in visual mode), the selected lines are inserted as a fenced code block at the top of the input, with the cursor positioned after the closing fence so you can immediately type your question:
 
 ```
@@ -150,6 +152,25 @@ local ok, data = pcall(vim.json.decode, raw)
 ```
 What happens if `raw` is an empty string here?
 ```
+
+### AI context levels
+
+The `context_level` option controls the trade-off between review depth and API cost:
+
+| Level | What the AI sees | Approximate cost |
+|-------|-----------------|-----------------|
+| `"minimal"` | File content + diff only | ~$0.01–0.05 per analysis |
+| `"standard"` | + git history, imports, sibling files | ~$0.001 extra per call |
+| `"full"` | + on-demand repo exploration via tools | ~$0.02–0.10 extra (varies) |
+
+**Prompt caching** is enabled automatically for the Anthropic API. System prompts and repo context are cached for 5 minutes, so repeated calls (e.g. analyzing multiple files, chatting about the same PR) cost ~90% less on input tokens after the first call.
+
+In `"full"` mode, the AI has three tools it can call during analysis and chat:
+- **get_file_history** — fetch recent git commits for any file
+- **read_repo_file** — read any file in the repository (capped at 200 lines)
+- **list_directory** — list files in a directory
+
+The AI decides when to use these tools based on the complexity of the change. Simple diffs incur no extra tool-call cost; complex changes that reference external types or have tricky history get richer context automatically.
 
 ## Configuration
 
@@ -226,6 +247,11 @@ require("gh-review").setup({
     -- When false, all AI features use a single buffered request instead.
     streaming      = true,
     max_tokens     = 4096,
+    -- context_level: how much repository context the AI receives.
+    --   "minimal"  — only the diff and file content (cheapest)
+    --   "standard" — + git history, imports, directory structure
+    --   "full"     — standard + on-demand tool use to read related files
+    context_level  = "standard",
     keymaps = {
       explain_selection = "<leader>ae",
       analyze_file      = "<leader>aa",

@@ -65,7 +65,7 @@ local function build_curl_args(opts, api_key, streaming, tmpfile)
   end
   if opts.tools and format ~= "openai" then
     body.tools       = opts.tools
-    body.tool_choice = { type = "any" }
+    body.tool_choice = opts.tool_choice or { type = "any" }
   end
 
   local url
@@ -107,7 +107,7 @@ local function build_curl_args(opts, api_key, streaming, tmpfile)
         })
       end
       body.tools       = oai_tools
-      body.tool_choice = "required"
+      body.tool_choice = opts.tool_choice or "required"
     end
     vim.list_extend(headers, { "-H", "Authorization: Bearer " .. api_key })
   else

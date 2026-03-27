@@ -74,8 +74,14 @@ end
 -- System prompt
 -- ---------------------------------------------------------------------------
 
+--- Build a rich system prompt with PR metadata, current file content, and all diffs.
+--- @param state GhReviewState
+--- @return string
 local function build_system(state)
-  local pr = state.pr
+  local pr  = state.pr
+  local cfg = (require("gh-review").config.ai) or {}
+  local ctx_level = cfg.context_level or "standard"
+
   local parts = {
     "You are a helpful code review assistant embedded in a Neovim PR review tool.",
     "Answer questions about the pull request and its code changes clearly and concisely.",
@@ -83,10 +89,68 @@ local function build_system(state)
     string.format("PR #%s: %s", pr.number or "?", pr.title or "(no title)"),
     string.format("Branch: %s → %s", pr.head_ref or "?", pr.base_ref or "?"),
   }
+
+  -- Current file the user is viewing
   local cur_file = pr.files and pr.files[pr.current_idx]
   if cur_file then
-    table.insert(parts, string.format("Currently viewing: %s", cur_file.filename))
+    table.insert(parts, string.format("\nThe user triggered AI chat while viewing: %s", cur_file.filename))
+
+    -- Include the current file's content from the diff buffer (PR/HEAD version)
+    local right_buf = state.layout and state.layout.right_buf
+    if right_buf and vim.api.nvim_buf_is_valid(right_buf) then
+      local lines = vim.api.nvim_buf_get_lines(right_buf, 0, -1, false)
+      local cap = math.min(#lines, 300)
+      table.insert(parts, string.format("\nCurrent file content (%s, PR version):", cur_file.filename))
+      table.insert(parts, "```")
+      for i = 1, cap do
+        table.insert(parts, string.format("%4d: %s", i, lines[i]))
+      end
+      if #lines > cap then
+        table.insert(parts, string.format("... (%d more lines truncated)", #lines - cap))
+      end
+      table.insert(parts, "```")
+    end
   end
+
+  -- All PR file changes (patches)
+  local files = pr.files or {}
+  if #files > 0 then
+    table.insert(parts, string.format("\n--- PR changes (%d file%s) ---", #files, #files == 1 and "" or "s"))
+    local max_files = 30
+    for idx, f in ipairs(files) do
+      if idx > max_files then
+        table.insert(parts, string.format("... and %d more files", #files - max_files))
+        break
+      end
+      local icon = f.status == "added" and "+" or f.status == "removed" and "-" or "~"
+      table.insert(parts, string.format(
+        "\n%s %s  (+%d -%d)", icon, f.filename, f.additions or 0, f.deletions or 0
+      ))
+      -- Include the unified diff patch (capped per file)
+      if f.patch and f.patch ~= "" then
+        local patch_lines = vim.split(f.patch, "\n", { plain = true })
+        local patch_cap = math.min(#patch_lines, 100)
+        table.insert(parts, "```diff")
+        for i = 1, patch_cap do
+          table.insert(parts, patch_lines[i])
+        end
+        if #patch_lines > patch_cap then
+          table.insert(parts, string.format("... (%d more patch lines)", #patch_lines - patch_cap))
+        end
+        table.insert(parts, "```")
+      end
+    end
+  end
+
+  -- In full mode, mention available tools
+  if ctx_level == "full" then
+    table.insert(parts, "\nYou have tools to explore the repository:")
+    table.insert(parts, "- get_file_history: get recent git commits for any file")
+    table.insert(parts, "- read_repo_file: read any file in the repo")
+    table.insert(parts, "- list_directory: list files in a directory")
+    table.insert(parts, "Use them when the user asks about code not shown above.")
+  end
+
   return table.concat(parts, "\n")
 end
 
@@ -94,15 +158,105 @@ end
 -- Send a message and stream the response into the chat buffer
 -- ---------------------------------------------------------------------------
 
+--- Build the shared client opts table from user config.
+local function chat_client_opts(state)
+  local cfg = require("gh-review").config.ai or {}
+  local opts = {
+    model      = cfg.model or "claude-haiku-4-5-20251001",
+    system     = build_system(state),
+    base_url   = cfg.base_url,
+    format     = cfg.format,
+    streaming  = cfg.streaming,
+    max_tokens = cfg.max_tokens or 4096,
+  }
+  if cfg.api_key and cfg.api_key ~= "" then
+    opts.api_key = cfg.api_key
+  else
+    opts.api_key_env = cfg.api_key_env or "ANTHROPIC_API_KEY"
+  end
+  return opts, cfg
+end
+
+--- Full-mode chat: non-streaming multi-turn loop with context tools.
+--- The AI can call tools to explore the repo, then responds with text.
+--- @param opts table       client opts (model, system, api_key, …)
+--- @param ai_start integer 0-indexed line where AI content begins in the chat buffer
+--- @param max_rounds integer
+--- @param on_done fun(text: string)
+--- @param on_error fun(err: string)
+--- @return {cancel: fun()}
+local function send_with_tools(opts, ai_start, max_rounds, on_done, on_error)
+  local client  = require("gh-review.ai.client")
+  local context = require("gh-review.ai.context")
+
+  local handle = { cancel = function() end }
+  local tool_round = 0
+
+  local function do_round()
+    tool_round = tool_round + 1
+    if tool_round > max_rounds then
+      on_error("Exceeded maximum tool-call rounds (" .. max_rounds .. ")")
+      return
+    end
+
+    -- Show which round we're on
+    if tool_round > 1 then
+      buf_replace_tail(ai_start, { "  _exploring repository… (tool call " .. (tool_round - 1) .. ")_" })
+    end
+
+    local h = client.request(opts, function(err, result)
+      if err then on_error(err); return end
+
+      -- Text response → done
+      if result.type == "text" then
+        on_done(result.text or "")
+        return
+      end
+
+      -- Tool call → execute and loop
+      if result.type == "tool_use" then
+        local tool_result = context.execute_tool(result.name, result.input)
+
+        -- Append the assistant tool_use and user tool_result to the messages
+        table.insert(opts.messages, {
+          role    = "assistant",
+          content = { {
+            type  = "tool_use",
+            id    = result.id,
+            name  = result.name,
+            input = result.input,
+          } },
+        })
+        table.insert(opts.messages, {
+          role    = "user",
+          content = { {
+            type        = "tool_result",
+            tool_use_id = result.id,
+            content     = tool_result,
+          } },
+        })
+
+        do_round()
+        return
+      end
+
+      on_error("Unexpected response type")
+    end)
+
+    handle.cancel = h.cancel
+  end
+
+  do_round()
+  return handle
+end
+
 local function send_message(text, state)
   if text == "" then return end
 
   -- Add user turn to history
   table.insert(_history, { role = "user", content = text })
 
-  -- Render user message into buffer.
-  -- text may contain embedded newlines (e.g. when pre-filled from a visual selection),
-  -- so split it into individual lines — nvim_buf_set_lines rejects strings with \n.
+  -- Render user message into buffer
   local user_lines = { "## You", "" }
   vim.list_extend(user_lines, vim.split(text, "\n", { plain = true }))
   vim.list_extend(user_lines, { "", "---", "", "## AI", "" })
@@ -113,35 +267,54 @@ local function send_message(text, state)
     and vim.api.nvim_buf_line_count(_buf)
     or 0
 
-  -- Placeholder while waiting for the first chunk
+  -- Placeholder while waiting
   buf_append({ "  _thinking…_" })
 
   -- Cancel any in-flight request
   if _active then pcall(_active.cancel); _active = nil end
 
+  local opts, cfg = chat_client_opts(state)
+  local ctx_level = cfg.context_level or "standard"
+
+  local function on_error(err)
+    if buf_valid() then
+      buf_replace_tail(ai_content_start, { "_Error: " .. err .. "_", "", "---", "" })
+    end
+    -- Remove the failed user turn so history stays consistent
+    if _history[#_history] and _history[#_history].role == "user" then
+      table.remove(_history)
+    end
+    _active = nil
+  end
+
+  -- Full mode: non-streaming with context tools
+  if ctx_level == "full" then
+    local context = require("gh-review.ai.context")
+    -- Use a shallow copy so tool-call round-trip messages don't pollute _history
+    local req_messages = {}
+    for _, m in ipairs(_history) do table.insert(req_messages, m) end
+    opts.messages    = req_messages
+    opts.tools       = context.CONTEXT_TOOLS
+    opts.tool_choice = { type = "auto" }
+
+    _active = send_with_tools(opts, ai_content_start, 5, function(response_text)
+      table.insert(_history, { role = "assistant", content = response_text })
+      buf_replace_tail(ai_content_start, vim.split(response_text, "\n", { plain = true }))
+      buf_append({ "", "---", "" })
+      _active = nil
+    end, on_error)
+    return
+  end
+
+  -- Minimal / standard mode: streaming
+  opts.messages = _history
   local accumulated = ""
   local first_chunk = true
 
-  local cfg = require("gh-review").config.ai or {}
-  local client_opts = {
-    model      = cfg.model or "claude-haiku-4-5-20251001",
-    system     = build_system(state),
-    messages   = _history,
-    base_url   = cfg.base_url,
-    format     = cfg.format,
-    streaming  = cfg.streaming,
-    max_tokens = cfg.max_tokens or 4096,
-  }
-  if cfg.api_key and cfg.api_key ~= "" then
-    client_opts.api_key = cfg.api_key
-  else
-    client_opts.api_key_env = cfg.api_key_env or "ANTHROPIC_API_KEY"
-  end
-
   local h = require("gh-review.ai.client").stream(
-    client_opts,
+    opts,
 
-    -- on_chunk: replace placeholder / accumulate streamed text
+    -- on_chunk
     function(chunk)
       accumulated = accumulated .. chunk
       first_chunk = false
@@ -157,17 +330,10 @@ local function send_message(text, state)
 
     -- on_error
     function(err)
-      if first_chunk then
-        buf_replace_tail(ai_content_start, { "_Error: " .. err .. "_" })
-      else
+      if not first_chunk then
         buf_append({ "", "_Error: " .. err .. "_" })
       end
-      buf_append({ "", "---", "" })
-      -- Remove the failed user turn from history so history stays consistent
-      if _history[#_history] and _history[#_history].role == "user" then
-        table.remove(_history)
-      end
-      _active = nil
+      on_error(err)
     end
   )
   _active = h
