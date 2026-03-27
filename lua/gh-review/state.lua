@@ -43,7 +43,7 @@ M.state = {
   },
 
   -- Extmark namespace handles (created once, reused)
-  ns = { comments = nil, signs = nil, eol = nil },
+  ns = { comments = nil, signs = nil, eol = nil, ai_findings = nil },
 }
 
 function M.reset()
@@ -83,7 +83,7 @@ function M.reset()
       all_bufs = {},
       ready = false,
     },
-    ns = ns,
+    ns = ns,  -- preserve all namespace handles (comments, signs, eol, ai_findings)
   }
 end
 

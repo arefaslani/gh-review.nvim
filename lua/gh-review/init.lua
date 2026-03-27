@@ -9,9 +9,10 @@ function M.setup(opts)
 
   -- Initialize namespaces once
   local state = require("gh-review.state")
-  state.state.ns.comments = vim.api.nvim_create_namespace("gh-pr-comments")
-  state.state.ns.signs = vim.api.nvim_create_namespace("gh-pr-signs")
-  state.state.ns.eol = vim.api.nvim_create_namespace("gh-pr-eol")
+  state.state.ns.comments    = vim.api.nvim_create_namespace("gh-pr-comments")
+  state.state.ns.signs       = vim.api.nvim_create_namespace("gh-pr-signs")
+  state.state.ns.eol         = vim.api.nvim_create_namespace("gh-pr-eol")
+  state.state.ns.ai_findings = vim.api.nvim_create_namespace("gh-pr-ai-findings")
 
   require("gh-review.ui.highlights").setup()
 

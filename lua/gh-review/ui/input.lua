@@ -32,8 +32,10 @@ local function _create_float(opts)
   end
 
   local win = vim.api.nvim_open_win(buf, true, win_cfg)
-  vim.api.nvim_set_option_value("wrap",      true,  { win = win })
-  vim.api.nvim_set_option_value("linebreak", true,  { win = win })
+  vim.api.nvim_set_option_value("wrap",       true,  { win = win })
+  vim.api.nvim_set_option_value("linebreak",  true,  { win = win })
+  vim.api.nvim_set_option_value("scrollbind", false, { win = win })
+  vim.api.nvim_set_option_value("cursorbind", false, { win = win })
   return buf, win
 end
 
@@ -108,12 +110,17 @@ local function make_restore(win, pos)
   end
 end
 
+local scrollbind = require("gh-review.ui.scrollbind")
+
 --- Open a simple floating text-input window and call `callback(body)` on submit.
 --- Keymaps:  <C-s> (any mode) or <CR> (normal) → submit; q / <Esc> (normal) → cancel.
 --- @param title string Window title shown in border
 --- @param callback fun(body: string)
 --- @param after_close? fun() Optional callback run after the float closes (submit or cancel)
-local function open_input_float(title, callback, after_close)
+--- @param state? GhReviewState When provided, scrollbind is disabled while the float is open
+local function open_input_float(title, callback, after_close, state)
+  scrollbind.disable(state)
+
   local width  = math.min(64, math.max(40, vim.o.columns - 20))
   local height = 8
   local buf, win = _create_float({
@@ -137,7 +144,10 @@ local function open_input_float(title, callback, after_close)
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
-    if after_close then vim.schedule(after_close) end
+    vim.schedule(function()
+      if after_close then after_close() end
+      scrollbind.reenable(state)
+    end)
     if body ~= "" then callback(body) end
   end
 
@@ -146,7 +156,10 @@ local function open_input_float(title, callback, after_close)
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
-    if after_close then vim.schedule(after_close) end
+    vim.schedule(function()
+      if after_close then after_close() end
+      scrollbind.reenable(state)
+    end)
   end
 
   local o = { buffer = buf, silent = true, nowait = true }
@@ -194,7 +207,7 @@ function M.open_comment(state)
     -- Ask comments module to refresh signs/EOL indicators if available
     local ok, cm = pcall(require, "gh-review.ui.comments")
     if ok then pcall(cm.update_pending, state) end
-  end, make_restore(saved_win, saved_pos))
+  end, make_restore(saved_win, saved_pos), state)
 end
 
 --- Open a floating window for a new standalone inline comment posted immediately.
@@ -245,7 +258,7 @@ function M.open_single_comment(state)
         if ok then pcall(cm.render_for_file, state, file.filename) end
       end)
     end)
-  end, make_restore(saved_win, saved_pos))
+  end, make_restore(saved_win, saved_pos), state)
 end
 
 --- Open a floating window for replying to a review thread near the cursor.
@@ -301,7 +314,7 @@ function M.reply_thread(state)
           end)
         end
       )
-    end, make_restore(saved_win, saved_pos))
+    end, make_restore(saved_win, saved_pos), state)
   end
 
   -- Only one thread — reply directly without a dialog
@@ -338,6 +351,7 @@ function M.reply_thread(state)
   vim.api.nvim_set_option_value("bufhidden",  "wipe",   { buf = buf })
   vim.api.nvim_set_option_value("modifiable", false,    { buf = buf })
 
+  scrollbind.disable(state)
   local win = vim.api.nvim_open_win(buf, true, {
     relative  = "editor",
     row       = row,
@@ -350,21 +364,28 @@ function M.reply_thread(state)
     title_pos = "center",
     zindex    = 60,
   })
+  vim.api.nvim_set_option_value("scrollbind", false, { win = win })
+  vim.api.nvim_set_option_value("cursorbind", false, { win = win })
 
-  local function close_dialog()
+  -- `and_reenable`: true when closing to cancel (no follow-up float),
+  -- false when closing to open the reply input float (which manages scrollbind itself).
+  local function close_dialog(and_reenable)
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
-    vim.schedule(make_restore(diff_win, saved_pos))
+    vim.schedule(function()
+      make_restore(diff_win, saved_pos)()
+      if and_reenable then scrollbind.reenable(state) end
+    end)
   end
 
   local o = { buffer = buf, silent = true, nowait = true }
-  vim.keymap.set("n", "q",     close_dialog, o)
-  vim.keymap.set("n", "<Esc>", close_dialog, o)
+  vim.keymap.set("n", "q",     function() close_dialog(true) end, o)
+  vim.keymap.set("n", "<Esc>", function() close_dialog(true) end, o)
 
   for i = 1, math.min(#threads, 9) do
     vim.keymap.set("n", tostring(i), function()
-      close_dialog()
+      close_dialog(false)
       open_reply_for(threads[i])
     end, o)
   end
@@ -493,6 +514,7 @@ function M.delete_pending(state)
     vim.api.nvim_set_option_value("bufhidden",  "wipe",   { buf = buf })
     vim.api.nvim_set_option_value("modifiable", false,    { buf = buf })
 
+    scrollbind.disable(state)
     local win = vim.api.nvim_open_win(buf, true, {
       relative  = "editor",
       row       = row,
@@ -505,12 +527,17 @@ function M.delete_pending(state)
       title_pos = "center",
       zindex    = 60,
     })
+    vim.api.nvim_set_option_value("scrollbind", false, { win = win })
+    vim.api.nvim_set_option_value("cursorbind", false, { win = win })
 
     local function close_dialog()
       if vim.api.nvim_win_is_valid(win) then
         vim.api.nvim_win_close(win, true)
       end
-      vim.schedule(make_restore(diff_win, saved_pos))
+      vim.schedule(function()
+        make_restore(diff_win, saved_pos)()
+        scrollbind.reenable(state)
+      end)
     end
 
     local o = { buffer = buf, silent = true, nowait = true }
@@ -584,6 +611,7 @@ function M.edit_comment(state)
 
     local function open_edit_for(candidate)
       local comment = candidate.comment
+      scrollbind.disable(state)
       local buf, win = _create_float({
         relative = "cursor",
         row      = 1,
@@ -609,7 +637,10 @@ function M.edit_comment(state)
         if vim.api.nvim_win_is_valid(win) then
           vim.api.nvim_win_close(win, true)
         end
-        vim.schedule(make_restore(saved_win, saved_pos))
+        vim.schedule(function()
+          make_restore(saved_win, saved_pos)()
+          scrollbind.reenable(state)
+        end)
         if body == "" then return end
 
         reviews.update_comment(comment.node_id, body, function(err)
@@ -637,7 +668,10 @@ function M.edit_comment(state)
         if vim.api.nvim_win_is_valid(win) then
           vim.api.nvim_win_close(win, true)
         end
-        vim.schedule(make_restore(saved_win, saved_pos))
+        vim.schedule(function()
+          make_restore(saved_win, saved_pos)()
+          scrollbind.reenable(state)
+        end)
       end
 
       local o = { buffer = buf, silent = true, nowait = true }
@@ -672,6 +706,7 @@ function M.edit_comment(state)
     vim.api.nvim_set_option_value("bufhidden",  "wipe",   { buf = buf })
     vim.api.nvim_set_option_value("modifiable", false,    { buf = buf })
 
+    scrollbind.disable(state)
     local win = vim.api.nvim_open_win(buf, true, {
       relative  = "editor",
       row       = row,
@@ -684,21 +719,28 @@ function M.edit_comment(state)
       title_pos = "center",
       zindex    = 60,
     })
+    vim.api.nvim_set_option_value("scrollbind", false, { win = win })
+    vim.api.nvim_set_option_value("cursorbind", false, { win = win })
 
-    local function close_dialog()
+    -- `and_reenable`: true when cancelling (no follow-up float),
+    -- false when opening the edit float (which manages scrollbind itself).
+    local function close_dialog(and_reenable)
       if vim.api.nvim_win_is_valid(win) then
         vim.api.nvim_win_close(win, true)
       end
-      vim.schedule(make_restore(diff_win, saved_pos))
+      vim.schedule(function()
+        make_restore(diff_win, saved_pos)()
+        if and_reenable then scrollbind.reenable(state) end
+      end)
     end
 
     local o = { buffer = buf, silent = true, nowait = true }
-    vim.keymap.set("n", "q",     close_dialog, o)
-    vim.keymap.set("n", "<Esc>", close_dialog, o)
+    vim.keymap.set("n", "q",     function() close_dialog(true) end, o)
+    vim.keymap.set("n", "<Esc>", function() close_dialog(true) end, o)
 
     for i = 1, math.min(#candidates, 9) do
       vim.keymap.set("n", tostring(i), function()
-        close_dialog()
+        close_dialog(false)
         open_edit_for(candidates[i])
       end, o)
     end
@@ -755,6 +797,7 @@ function M.open_review_dialog(state)
   vim.api.nvim_set_option_value("bufhidden",  "wipe",   { buf = buf })
   vim.api.nvim_set_option_value("modifiable", false,    { buf = buf })
 
+  scrollbind.disable(state)
   local win = vim.api.nvim_open_win(buf, true, {
     relative  = "editor",
     row       = row,
@@ -767,7 +810,9 @@ function M.open_review_dialog(state)
     title_pos = "center",
     zindex    = 60,
   })
-  vim.api.nvim_set_option_value("cursorline", true, { win = win })
+  vim.api.nvim_set_option_value("scrollbind", false, { win = win })
+  vim.api.nvim_set_option_value("cursorbind", false, { win = win })
+  vim.api.nvim_set_option_value("cursorline", true,  { win = win })
 
   -- Start cursor on first option
   vim.api.nvim_win_set_cursor(win, { option_start, 0 })
@@ -776,6 +821,7 @@ function M.open_review_dialog(state)
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
+    vim.schedule(function() scrollbind.reenable(state) end)
   end
 
   local function confirm()

@@ -64,7 +64,8 @@ end
 --- @param state GhReviewState
 --- @param buf integer Buffer handle
 function M.set_keymaps(state, buf)
-  local cfg = require("gh-review").config.keymaps
+  local full_cfg = require("gh-review").config
+  local cfg = full_cfg.keymaps
   local function map(lhs, rhs, desc)
     if lhs == false then return end
     vim.keymap.set("n", lhs, rhs, { buffer = buf, silent = true, desc = desc })
@@ -243,6 +244,57 @@ function M.set_keymaps(state, buf)
     main.open_pr(pr_number)
   end, "Refresh PR data")
 
+  -- AI features (only registered when ai.enabled = true)
+  local ai_cfg = full_cfg.ai or {}
+  if ai_cfg.enabled then
+    local km = ai_cfg.keymaps or {}
+    local function ai_map(lhs, fn, desc)
+      if lhs == false or lhs == nil then return end
+      vim.keymap.set("n", lhs, fn, { buffer = buf, silent = true, desc = desc })
+    end
+
+    -- explain_selection needs both normal and visual mode
+    if km.explain_selection and km.explain_selection ~= false then
+      local explain_fn = function()
+        require("gh-review.ai").explain_selection(state, buf)
+      end
+      vim.keymap.set({ "n", "v" }, km.explain_selection, explain_fn, {
+        buffer = buf, silent = true, desc = "AI: Explain selection",
+      })
+    end
+
+    ai_map(km.analyze_file, function()
+      require("gh-review.ai").analyze_file(state)
+    end, "AI: Analyze file for issues")
+
+    ai_map(km.draft_comment, function()
+      require("gh-review.ai").draft_comment(state, buf)
+    end, "AI: Draft comment for current line")
+
+    ai_map(km.review_summary, function()
+      require("gh-review.ai").review_summary(state)
+    end, "AI: Generate PR review summary")
+
+    ai_map(km.reply_suggestion, function()
+      require("gh-review.ai").reply_suggestion(state, buf)
+    end, "AI: Suggest reply to thread")
+
+    ai_map(km.dismiss, function()
+      require("gh-review.ai").dismiss(state)
+    end, "AI: Dismiss findings")
+
+    ai_map(km.chat_open, function()
+      require("gh-review.ai.chat").open(state)
+    end, "AI: Open chat")
+
+    -- Visual mode: open chat with the selection pre-filled as context
+    if km.chat_open ~= false and km.chat_open ~= nil then
+      vim.keymap.set("v", km.chat_open, function()
+        require("gh-review.ai.chat").open_with_context(state, buf)
+      end, { buffer = buf, silent = true, desc = "AI: Open chat with selection" })
+    end
+  end
+
   -- Help
   map("?", function() M.show_help(state) end, "Show keybinding help")
 
@@ -279,7 +331,8 @@ function M.show_help(state)
   local diff_win  = vim.api.nvim_get_current_win()
   local saved_pos = vim.api.nvim_win_get_cursor(diff_win)
 
-  local cfg = require("gh-review").config.keymaps
+  local full_cfg = require("gh-review").config
+  local cfg = full_cfg.keymaps
 
   -- Helper to display a key, replacing false/nil with "(disabled)"
   local function k(key)
@@ -322,9 +375,29 @@ function M.show_help(state)
     string.format("  %-16s  Close PR review", k(cfg.close)),
     string.format("  %-16s  Refresh PR data", k(cfg.refresh)),
     string.format("  %-16s  This help", "?"),
+  }
+
+  -- AI section (only shown when enabled)
+  local ai_cfg = full_cfg.ai or {}
+  if ai_cfg.enabled then
+    local km = ai_cfg.keymaps or {}
+    local ai_lines = {
+      "",
+      "  AI (Claude)",
+      string.format("  %-16s  Explain selection", k(km.explain_selection)),
+      string.format("  %-16s  Analyze file for issues", k(km.analyze_file)),
+      string.format("  %-16s  Draft comment for line", k(km.draft_comment)),
+      string.format("  %-16s  Generate review summary", k(km.review_summary)),
+      string.format("  %-16s  Suggest thread reply", k(km.reply_suggestion)),
+      string.format("  %-16s  Dismiss AI findings", k(km.dismiss)),
+    }
+    for _, l in ipairs(ai_lines) do table.insert(lines, l) end
+  end
+
+  vim.list_extend(lines, {
     "",
     "  Press q or <Esc> to close",
-  }
+  })
 
   local width  = 52
   local height = #lines
@@ -349,42 +422,25 @@ function M.show_help(state)
     title_pos = "center",
     zindex    = 60,
   })
+  vim.api.nvim_set_option_value("scrollbind", false, { win = win })
+  vim.api.nvim_set_option_value("cursorbind", false, { win = win })
   vim.api.nvim_set_option_value("cursorline", false, { win = win })
 
+  local scrollbind = require("gh-review.ui.scrollbind")
+
   local function close()
-    -- Suspend bind on BOTH diff windows before closing the float,
-    -- so Neovim's automatic focus-restore doesn't trigger a sync.
-    local left  = state.layout.left_win
-    local right = state.layout.right_win
-    for _, w in ipairs({ left, right }) do
-      if w and vim.api.nvim_win_is_valid(w) then
-        vim.wo[w].scrollbind = false
-        vim.wo[w].cursorbind = false
-      end
-    end
+    scrollbind.disable(state)
 
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
 
-    -- Restore cursor, then re-enable bind and sync from the right position
     if vim.api.nvim_win_is_valid(diff_win) then
       vim.api.nvim_set_current_win(diff_win)
       pcall(vim.api.nvim_win_set_cursor, diff_win, saved_pos)
     end
 
-    for _, w in ipairs({ left, right }) do
-      if w and vim.api.nvim_win_is_valid(w) then
-        vim.wo[w].scrollbind = true
-        vim.wo[w].cursorbind = true
-      end
-    end
-
-    if vim.api.nvim_win_is_valid(diff_win) then
-      vim.api.nvim_win_call(diff_win, function()
-        pcall(vim.cmd, "syncbind")
-      end)
-    end
+    scrollbind.reenable(state)
   end
 
   local o = { buffer = buf, silent = true, nowait = true }

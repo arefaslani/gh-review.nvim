@@ -13,6 +13,7 @@ A Neovim plugin for reviewing GitHub Pull Requests with side-by-side diffs, inli
 - **Commit-by-commit review** — Toggle between full-PR and per-commit diff modes
 - **Viewed file tracking** — Mark files as reviewed, synced with GitHub's viewed state
 - **Edit and resume** — Jump to editing a file, then resume the review where you left off
+- **AI-assisted review** — Explain code, analyze files for issues, draft comments, and summarize PRs using Claude (requires API key; works with any Anthropic-compatible endpoint)
 
 ## Requirements
 
@@ -115,6 +116,41 @@ When entering live mode, any active shortcut filters (`<C-a>` etc.) are pre-popu
 | `<leader>cv` | Toggle viewed on selected file |
 | `q` | Close review |
 
+### AI (requires `ai.enabled = true`)
+
+| Key | Action |
+|-----|--------|
+| `<leader>ae` | Explain visual selection or current line |
+| `<leader>aa` | Analyze current file diff for issues |
+| `<leader>ac` | Draft a review comment for the current line |
+| `<leader>as` | Generate a PR review summary |
+| `<leader>ar` | Suggest a reply to the thread under cursor |
+| `<leader>ad` | Dismiss AI findings from diff buffers |
+| `<leader>ai` | Open AI chat for the current PR |
+| `<leader>ai` _(visual)_ | Open AI chat with selection pre-filled as context |
+
+### AI Chat window
+
+| Key | Action |
+|-----|--------|
+| `i` / `a` / `<CR>` | Open message input |
+| `<C-s>` / `<CR>` | Send message (inside input) |
+| `<Esc>` | Cancel input / close chat |
+| `<C-a>` | Copy last AI response to clipboard |
+| `<C-x>` | Clear chat history |
+| `q` | Close chat window |
+
+The chat maintains full conversation history for the current PR — ask follow-up questions, request clarifications, or dig into specific changes. History resets automatically when you open a different PR.
+
+When triggered from a visual selection (`<leader>ai` in visual mode), the selected lines are inserted as a fenced code block at the top of the input, with the cursor positioned after the closing fence so you can immediately type your question:
+
+```
+```lua
+local ok, data = pcall(vim.json.decode, raw)
+```
+What happens if `raw` is an empty string here?
+```
+
 ## Configuration
 
 All options with their defaults:
@@ -149,7 +185,7 @@ require("gh-review").setup({
     prev_commit        = "[g",
     add_comment        = "<leader>cc",
     add_single_comment = "<leader>ca",
-    add_suggestion     = "<leader>cs",
+
     edit_comment       = "<leader>ce",
     reply_thread       = "<leader>cr",
     delete_comment     = "<leader>cd",
@@ -168,7 +204,113 @@ require("gh-review").setup({
     pending  = "",
     resolved = "",
   },
+
+  -- AI features (disabled by default)
+  -- Requires an Anthropic-compatible API key.
+  -- Works with the public Anthropic API or any compatible gateway
+  -- (AWS Bedrock, custom proxies, etc.) via base_url + format + streaming.
+  ai = {
+    enabled        = false,
+    model          = "claude-haiku-4-5-20251001",  -- fast model for interactive features
+    analysis_model = "claude-sonnet-4-6",          -- deeper model for analyze_file
+    api_key_env    = "ANTHROPIC_API_KEY",          -- env var to read the key from
+    api_key        = nil,                          -- or set directly: api_key = "sk-ant-..."
+    base_url       = "https://api.anthropic.com/v1/messages",  -- override for custom gateways
+    -- format: controls the wire protocol used to talk to the AI backend.
+    --   "anthropic" (default) — Anthropic Messages API
+    --   "bedrock"             — AWS Bedrock (model in URL, anthropic_version in body)
+    --   "openai"              — OpenAI-compatible API (works with OpenAI, Groq, Mistral,
+    --                           Together AI, Ollama, LM Studio, Gemini, and more)
+    format         = "anthropic",
+    -- streaming: set to false if your gateway does not support SSE streaming.
+    -- When false, all AI features use a single buffered request instead.
+    streaming      = true,
+    max_tokens     = 4096,
+    keymaps = {
+      explain_selection = "<leader>ae",
+      analyze_file      = "<leader>aa",
+      draft_comment     = "<leader>ac",
+      review_summary    = "<leader>as",
+      reply_suggestion  = "<leader>ar",
+      dismiss           = "<leader>ad",
+      chat_open         = "<leader>ai",
+    },
+  },
 })
+```
+
+### Using a custom AI gateway or alternative LLM
+
+The `format` option controls the wire protocol. Set `base_url` to point at any compatible endpoint:
+
+**OpenAI**
+```lua
+ai = {
+  enabled        = true,
+  format         = "openai",
+  api_key_env    = "OPENAI_API_KEY",
+  model          = "gpt-4o-mini",
+  analysis_model = "gpt-4o",
+},
+```
+
+**Google Gemini** (via its OpenAI-compatible endpoint)
+```lua
+ai = {
+  enabled        = true,
+  format         = "openai",
+  api_key_env    = "GEMINI_API_KEY",
+  base_url       = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+  model          = "gemini-2.0-flash",
+  analysis_model = "gemini-2.5-pro-preview-03-25",
+},
+```
+
+**Groq**
+```lua
+ai = {
+  enabled        = true,
+  format         = "openai",
+  api_key_env    = "GROQ_API_KEY",
+  base_url       = "https://api.groq.com/openai/v1/chat/completions",
+  model          = "llama-3.3-70b-versatile",
+  analysis_model = "llama-3.3-70b-versatile",
+},
+```
+
+**Ollama** (local, no key needed)
+```lua
+ai = {
+  enabled        = true,
+  format         = "openai",
+  api_key        = "ollama",  -- Ollama ignores the key but the field must be non-empty
+  base_url       = "http://localhost:11434/v1/chat/completions",
+  model          = "qwen2.5-coder:7b",
+  analysis_model = "qwen2.5-coder:7b",
+},
+```
+
+**AWS Bedrock (Claude via Bedrock)**
+```lua
+ai = {
+  enabled        = true,
+  format         = "bedrock",
+  api_key_env    = "AWS_SESSION_TOKEN",
+  base_url       = "https://bedrock-runtime.us-east-1.amazonaws.com",
+  model          = "anthropic.claude-haiku-4-5-20251001",
+  analysis_model = "anthropic.claude-sonnet-4-6",
+  streaming      = false,  -- set true only if your Bedrock proxy supports SSE
+},
+```
+
+**Custom gateway (any Anthropic-compatible proxy)**
+```lua
+ai = {
+  enabled     = true,
+  format      = "anthropic",
+  api_key_env = "MY_GATEWAY_TOKEN",
+  base_url    = "https://my-gateway.example.com/v1/messages",
+},
 ```
 
 ## Highlight Groups
