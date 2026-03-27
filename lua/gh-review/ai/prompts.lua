@@ -131,25 +131,29 @@ end
 
 --- Build the user message for draft_comment.
 --- @param file GhFile
---- @param cursor_line integer  1-based
+--- @param line_start integer  1-based start line
 --- @param buf_lines string[]
 --- @param threads GhThread[]
+--- @param line_end? integer   1-based end line (nil or same as line_start for single line)
 --- @return string
-function M.draft_comment_context(file, cursor_line, buf_lines, threads)
+function M.draft_comment_context(file, line_start, buf_lines, threads, line_end)
+  line_end = line_end or line_start
+  local is_range = line_end > line_start
   local parts = {}
 
   table.insert(parts, string.format("File: %s", file.filename))
 
-  -- ±20 lines around cursor, with >> marker
-  local ctx_start = math.max(1, cursor_line - 20)
-  local ctx_end   = math.min(#buf_lines, cursor_line + 20)
+  -- ±20 lines around the target range, with >> marker on selected lines
+  local ctx_start = math.max(1, line_start - 20)
+  local ctx_end   = math.min(#buf_lines, line_end + 20)
   local ctx_lines = {}
   for i = ctx_start, ctx_end do
-    local prefix = (i == cursor_line) and ">> " or "   "
+    local prefix = (i >= line_start and i <= line_end) and ">> " or "   "
     table.insert(ctx_lines, string.format("%s%4d: %s", prefix, i, buf_lines[i] or ""))
   end
 
-  table.insert(parts, "\nCode context (>> marks the target line):")
+  local marker_desc = is_range and ">> marks the selected lines" or ">> marks the target line"
+  table.insert(parts, string.format("\nCode context (%s):", marker_desc))
   table.insert(parts, "```")
   table.insert(parts, table.concat(ctx_lines, "\n"))
   table.insert(parts, "```")
@@ -158,7 +162,7 @@ function M.draft_comment_context(file, cursor_line, buf_lines, threads)
   local nearby = {}
   for _, t in ipairs(threads or {}) do
     local t_line = t.line or t.original_line or 0
-    if math.abs(t_line - cursor_line) <= 10 then
+    if t_line >= line_start - 10 and t_line <= line_end + 10 then
       local first = t.comments and t.comments[1]
       if first then
         table.insert(nearby, string.format(
@@ -172,9 +176,15 @@ function M.draft_comment_context(file, cursor_line, buf_lines, threads)
     table.insert(parts, table.concat(nearby, "\n"))
   end
 
-  table.insert(parts, string.format(
-    "\nDraft a concise review comment for line %d.", cursor_line
-  ))
+  if is_range then
+    table.insert(parts, string.format(
+      "\nDraft a concise review comment for lines %d–%d.", line_start, line_end
+    ))
+  else
+    table.insert(parts, string.format(
+      "\nDraft a concise review comment for line %d.", line_start
+    ))
+  end
 
   return table.concat(parts, "\n")
 end

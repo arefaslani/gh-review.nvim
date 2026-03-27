@@ -512,7 +512,7 @@ function M.dismiss(state)
   vim.notify("gh-review AI: findings dismissed", vim.log.levels.INFO)
 end
 
---- Draft a review comment for the line under the cursor.
+--- Draft a review comment for the line under the cursor or visual selection.
 --- Streams a suggestion into a floating window; user can C-a to copy, then
 --- switch to the comment float and paste.
 --- @param state GhReviewState
@@ -524,7 +524,21 @@ function M.draft_comment(state, buf)
   local file = state.pr.files[state.pr.current_idx]
   if not file then return end
 
-  local cur_line  = vim.api.nvim_win_get_cursor(0)[1]
+  -- Detect visual selection (line("v") = anchor, line(".") = cursor)
+  local mode = vim.fn.mode()
+  local line_start, line_end
+  if mode == "v" or mode == "V" or mode == "\22" then
+    line_start = vim.fn.line("v")
+    line_end   = vim.fn.line(".")
+    if line_start > line_end then line_start, line_end = line_end, line_start end
+    -- Exit visual mode
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "nx", false)
+  else
+    local cur = vim.api.nvim_win_get_cursor(0)[1]
+    line_start = cur
+    line_end   = cur
+  end
+
   local buf_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
   local file_threads = {}
@@ -532,7 +546,7 @@ function M.draft_comment(state, buf)
     if t.path == file.filename then table.insert(file_threads, t) end
   end
 
-  local user_msg = prompts.draft_comment_context(file, cur_line, buf_lines, file_threads)
+  local user_msg = prompts.draft_comment_context(file, line_start, buf_lines, file_threads, line_end)
   local append = open_streaming_float(
     "AI Draft Comment   q=close   C-a=copy",
     12,

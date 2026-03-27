@@ -267,9 +267,15 @@ function M.set_keymaps(state, buf)
       require("gh-review.ai").analyze_file(state)
     end, "AI: Analyze file for issues")
 
-    ai_map(km.draft_comment, function()
-      require("gh-review.ai").draft_comment(state, buf)
-    end, "AI: Draft comment for current line")
+    -- draft_comment works in both normal and visual mode
+    if km.draft_comment and km.draft_comment ~= false then
+      local draft_fn = function()
+        require("gh-review.ai").draft_comment(state, buf)
+      end
+      vim.keymap.set({ "n", "v" }, km.draft_comment, draft_fn, {
+        buffer = buf, silent = true, desc = "AI: Draft comment",
+      })
+    end
 
     ai_map(km.review_summary, function()
       require("gh-review.ai").review_summary(state)

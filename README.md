@@ -122,7 +122,7 @@ When entering live mode, any active shortcut filters (`<C-a>` etc.) are pre-popu
 |-----|--------|
 | `<leader>ae` | Explain visual selection or current line |
 | `<leader>aa` | Analyze current file diff for issues |
-| `<leader>ac` | Draft a review comment for the current line |
+| `<leader>ac` | Draft a review comment for the current line or visual selection |
 | `<leader>as` | Generate a PR review summary |
 | `<leader>ar` | Suggest a reply to the thread under cursor |
 | `<leader>ad` | Dismiss AI findings from diff buffers |
