@@ -27,7 +27,7 @@ A Neovim plugin for reviewing GitHub Pull Requests with side-by-side diffs, inli
 
 ```lua
 {
-  "aref-aslani/gh-review.nvim",
+  "arefaslani/gh-review.nvim",
   dependencies = { "folke/snacks.nvim" },
   cmd = { "GhReview", "GhReviewClose", "GhReviewResume", "GhPrs" },
   keys = {
