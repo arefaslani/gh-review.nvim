@@ -53,7 +53,15 @@ function M.open_pr(pr_number, open_opts)
   open_opts = open_opts or {}
 
   if not pr_number then
-    vim.notify("gh-review: PR number required. Use :GhReview <number>", vim.log.levels.WARN)
+    vim.ui.input({ prompt = "PR number: " }, function(input)
+      if not input or input == "" then return end
+      local n = tonumber(input)
+      if not n then
+        vim.notify("gh-review: Invalid PR number", vim.log.levels.WARN)
+        return
+      end
+      M.open_pr(n, open_opts)
+    end)
     return
   end
 
