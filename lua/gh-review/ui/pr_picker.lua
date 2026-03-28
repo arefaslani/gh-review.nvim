@@ -22,6 +22,26 @@ local function filter_label()
   return s or ""
 end
 
+local LOADING_TIPS = {
+  "tip: <C-a> filter by author    <C-o> show open PRs only",
+  "tip: <C-x> show closed PRs     <C-n> review requested by you",
+  "tip: <C-g> toggle live search   type to fuzzy-filter results",
+  "tip: <C-r> refresh PR list      <CR> open selected PR",
+  "tip: live search passes queries directly to the GitHub API",
+  "tip: combine filters — e.g. <C-a> + <C-o> for your open PRs",
+}
+
+local OPENING_TIPS = {
+  "tip: use ]c / [c to jump between changed lines in a file",
+  "tip: use ]x / [x to jump between comments in a file",
+  "tip: use ]f / [f to jump between changed files",
+  "tip: press q to close the review",
+}
+
+local function random_tip(tips)
+  return tips[math.random(#tips)]
+end
+
 local REVIEW_ICONS = {
   APPROVED           = "✔",
   CHANGES_REQUESTED  = "✗",
@@ -92,12 +112,57 @@ function M.open(prs, opts)
   local _last_search = ""  -- tracks last search sent to gh CLI
   local _fetch_id    = 0   -- incremented on each fetch; used to discard stale responses
 
-  local function make_loading_item(text)
-    return { idx = 1, text = text, _loading = true, number = 0,
+  local function make_loading_item(text, idx)
+    idx = idx or 1
+    return { idx = idx, text = text, _loading = true, number = 0,
       title = text, author = "", icon = "…", stats = "", body = "", isDraft = false,
       _pr = { number = 0, title = text, body = "",
                headRefName = "?", baseRefName = "?", changedFiles = 0 } }
   end
+
+  local spinner_frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+  local spinner_idx = 1
+  local spinner_timer = nil
+
+  local _current_tip = nil
+
+  local function make_loading_items(label, tips)
+    _current_tip = random_tip(tips or LOADING_TIPS)
+    local item = make_loading_item(spinner_frames[spinner_idx] .. " " .. (label or "Loading PRs…"), 1)
+    item._tip = _current_tip
+    return { item }
+  end
+
+  local spinner_label = "Loading PRs…"
+
+  local function start_spinner(label)
+    spinner_label = label or "Loading PRs…"
+    if spinner_timer then return end
+    spinner_timer = vim.uv.new_timer()
+    spinner_timer:start(0, 80, vim.schedule_wrap(function()
+      spinner_idx = (spinner_idx % #spinner_frames) + 1
+      if picker_ref and not picker_ref.closed and current_items[1] and current_items[1]._loading then
+        current_items[1].text = spinner_frames[spinner_idx] .. " " .. spinner_label
+        current_items[1].title = current_items[1].text
+        picker_ref:refresh()
+      else
+        if spinner_timer then
+          spinner_timer:stop()
+          spinner_timer:close()
+          spinner_timer = nil
+        end
+      end
+    end))
+  end
+
+  local function stop_spinner()
+    if spinner_timer then
+      spinner_timer:stop()
+      spinner_timer:close()
+      spinner_timer = nil
+    end
+  end
+
 
   --- Fetch PRs and update items in-place, showing a loading placeholder while waiting.
   --- Also syncs filter.search so the statuscolumn reflects the active search.
@@ -110,7 +175,8 @@ function M.open(prs, opts)
     _last_search = search
     _fetch_id = _fetch_id + 1
     local my_id = _fetch_id
-    current_items = { make_loading_item("Loading PRs…") }
+    current_items = make_loading_items()
+    start_spinner()
     if picker_ref and not picker_ref.closed then
       picker_ref.input.filter.search = search
       picker_ref.input:update()
@@ -119,6 +185,7 @@ function M.open(prs, opts)
     end
     prs_mod.list(ctx.owner, ctx.repo, list_opts, function(err, new_prs)
       if my_id ~= _fetch_id then return end
+      stop_spinner()
       if err then
         vim.notify("gh-review: " .. err, vim.log.levels.ERROR)
         return
@@ -157,13 +224,12 @@ function M.open(prs, opts)
   end
 
   -- Assign the mutable items source (forward-declared above)
-  current_items = prs and build_items(prs) or {
-    { idx = 1, text = "Loading PRs…", _loading = true, number = 0,
-      title = "Loading PRs…", author = "", icon = "…", stats = "",
-      body = "", isDraft = false,
-      _pr = { number = 0, title = "Loading…", body = "",
-               headRefName = "?", baseRefName = "?", changedFiles = 0 } },
-  }
+  if prs then
+    current_items = build_items(prs)
+  else
+    current_items = make_loading_items()
+    start_spinner()
+  end
 
   picker_ref = Snacks.picker.pick({
     source        = "gh_prs",
@@ -180,10 +246,14 @@ function M.open(prs, opts)
         _last_search = search
         _fetch_id = _fetch_id + 1
         local my_id = _fetch_id
-        current_items = { make_loading_item("Loading PRs…") }
+        if not (current_items[1] and current_items[1]._loading) then
+          current_items = make_loading_items()
+        end
+        start_spinner()
         prs_mod.list(ctx.owner, ctx.repo, search ~= "" and { search = search } or nil,
           function(err, new_prs)
             if my_id ~= _fetch_id then return end
+            stop_spinner()
             if err then vim.notify("gh-review: " .. err, vim.log.levels.ERROR); return end
             current_items = build_items(new_prs or {})
             if picker_ref and not picker_ref.closed then
@@ -204,7 +274,7 @@ function M.open(prs, opts)
 
     format = function(item, _picker)
       if item._loading then
-        return { { "  Loading PRs…", "Comment" } }
+        return { { "  " .. (item.title or ""), "Special" } }
       end
       local num_hl  = "Special"
       local icon_hl = item.isDraft and "Comment"
@@ -223,6 +293,11 @@ function M.open(prs, opts)
     preview = function(ctx)
       local item = ctx.item
       if not item then return end
+      if item._loading then
+        local lines = { "", "  " .. (item._tip or "") }
+        ctx.preview:set_lines(lines)
+        return
+      end
       local pr = item._pr
       local lines = {
         string.format("# PR #%d: %s", pr.number, pr.title),
@@ -253,15 +328,16 @@ function M.open(prs, opts)
       _active_filters = {}
       -- Show a loading message in the picker while the diff view loads;
       -- the picker is closed by the on_open callback once the view is ready.
-      current_items = { { idx = 1, text = "Opening PR #" .. item.number .. "…",
-        _loading = true, number = 0, title = "Opening PR #" .. item.number .. "…",
-        author = "", icon = "…", stats = "", body = "", isDraft = false,
-        _pr = { number = 0, title = "Opening…", body = "",
-                 headRefName = "?", baseRefName = "?", changedFiles = 0 } } }
-      picker_ref.title = "Opening PR #" .. item.number .. "…"
+      local open_text = "Opening PR #" .. item.number .. "…"
+      current_items = make_loading_items(open_text, OPENING_TIPS)
+      stop_spinner()
+      start_spinner(open_text)
+
+      picker_ref.title = open_text
       picker_ref:refresh()
       require("gh-review").open_pr(item.number, {
         on_open = function()
+          stop_spinner()
           if picker_ref and not picker_ref.closed then picker_ref:close() end
         end,
       })
@@ -285,6 +361,7 @@ function M.open(prs, opts)
       base_title = new_opts.title or base_title
       _fetch_id = _fetch_id + 1  -- discard any in-flight live searches
       _last_search = ""
+      stop_spinner()
       current_items = build_items(new_prs or {})
       picker_ref.title = get_title()
       -- Start fetching contributors now that we have owner/repo
