@@ -59,7 +59,7 @@ A Neovim plugin for reviewing GitHub Pull Requests with side-by-side diffs, inli
 | `<C-o>` | Toggle `is:open` filter |
 | `<C-x>` | Toggle `is:closed` filter |
 | `<C-n>` | Toggle `review-requested:@me` filter |
-| `<C-g>` | Toggle live search mode |
+| `<C-g>` | Toggle live search mode (with inline author completion) |
 | `<C-r>` | Refresh / clear filters |
 
 The picker has two input modes:
@@ -68,6 +68,8 @@ The picker has two input modes:
 - **Live mode** (`<C-g>`) — the input is sent directly to `gh pr list --search` on each keystroke, re-querying GitHub in real time. Supports any [GitHub search qualifier](https://docs.github.com/en/search-github/searching-on-github/searching-issues-and-pull-requests) (e.g. `author:@me is:open label:bug`). Pressing `<C-g>` again returns to fuzzy mode.
 
 When entering live mode, any active shortcut filters (`<C-a>` etc.) are pre-populated into the input so you can inspect and edit them. All fetches happen in-place — the picker stays open and shows a loading indicator while results arrive.
+
+**Author completion** — In live mode (`<C-g>`), type `author:` and ghost-text completion activates inline with suggestions from the repo's contributor list. `<Tab>` accepts the current suggestion, `<S-Tab>` cycles backward.
 
 ### Diff View
 

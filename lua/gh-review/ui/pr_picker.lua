@@ -324,6 +324,25 @@ function M.open(prs, opts)
           picker_ref.input.filter.search = build_search() or ""
         end
         require("snacks.picker.actions").toggle_live(picker_ref)
+        -- Attach/detach ghost-text author completion on the input buffer
+        local iwin = picker_ref.layout and picker_ref.layout.wins
+          and picker_ref.layout.wins.input
+        if iwin and iwin:valid() then
+          if picker_ref.opts.live then
+            -- Entering live mode — attach completion
+            if not picker_ref._gh_ghost_detach then
+              local ghost = require("gh-review.ui.ghost_complete")
+              picker_ref._gh_ghost_detach = ghost.attach(
+                iwin.buf, iwin.win, contributor_logins)
+            end
+          else
+            -- Leaving live mode — detach completion
+            if picker_ref._gh_ghost_detach then
+              picker_ref._gh_ghost_detach()
+              picker_ref._gh_ghost_detach = nil
+            end
+          end
+        end
       end, o)
     end
 

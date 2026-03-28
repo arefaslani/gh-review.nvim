@@ -33,6 +33,9 @@ local highlights = {
   GhSignComment     = { link = "DiagnosticSignInfo",  default = true },
   GhSignUnresolved  = { link = "DiagnosticSignWarn",  default = true },
   GhSignPending     = { link = "DiagnosticSignHint",  default = true },
+
+  -- Ghost completion (author filter)
+  GhGhostText       = { link = "Comment", italic = true, default = true },
 }
 
 local function apply()
