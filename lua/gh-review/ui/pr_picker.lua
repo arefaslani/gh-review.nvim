@@ -22,25 +22,7 @@ local function filter_label()
   return s or ""
 end
 
-local LOADING_TIPS = {
-  "tip: <C-a> filter by author    <C-o> show open PRs only",
-  "tip: <C-x> show closed PRs     <C-n> review requested by you",
-  "tip: <C-g> toggle live search   type to fuzzy-filter results",
-  "tip: <C-r> refresh PR list      <CR> open selected PR",
-  "tip: live search passes queries directly to the GitHub API",
-  "tip: combine filters — e.g. <C-a> + <C-o> for your open PRs",
-}
-
-local OPENING_TIPS = {
-  "tip: use ]c / [c to jump between changed lines in a file",
-  "tip: use ]x / [x to jump between comments in a file",
-  "tip: use ]f / [f to jump between changed files",
-  "tip: press q to close the review",
-}
-
-local function random_tip(tips)
-  return tips[math.random(#tips)]
-end
+local tips = require("gh-review.ui.tips")
 
 local REVIEW_ICONS = {
   APPROVED           = "✔",
@@ -126,8 +108,8 @@ function M.open(prs, opts)
 
   local _current_tip = nil
 
-  local function make_loading_items(label, tips)
-    _current_tip = random_tip(tips or LOADING_TIPS)
+  local function make_loading_items(label, tip_list)
+    _current_tip = tips.random(tip_list or tips.loading)
     local item = make_loading_item(spinner_frames[spinner_idx] .. " " .. (label or "Loading PRs…"), 1)
     item._tip = _current_tip
     return { item }
@@ -329,7 +311,7 @@ function M.open(prs, opts)
       -- Show a loading message in the picker while the diff view loads;
       -- the picker is closed by the on_open callback once the view is ready.
       local open_text = "Opening PR #" .. item.number .. "…"
-      current_items = make_loading_items(open_text, OPENING_TIPS)
+      current_items = make_loading_items(open_text, tips.opening)
       stop_spinner()
       start_spinner(open_text)
 
