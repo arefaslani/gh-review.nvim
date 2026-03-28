@@ -146,12 +146,12 @@ The AI chat is context-aware: it knows which file you were viewing when you open
 
 When triggered from a visual selection (`<leader>ai` in visual mode), the selected lines are inserted as a fenced code block at the top of the input, with the cursor positioned after the closing fence so you can immediately type your question:
 
-```
+````
 ```lua
 local ok, data = pcall(vim.json.decode, raw)
 ```
 What happens if `raw` is an empty string here?
-```
+````
 
 ### AI context levels
 
