@@ -584,7 +584,9 @@ function M.delete_pending(state)
     for i = 1, math.min(#candidates, 9) do
       vim.keymap.set("n", tostring(i), function()
         close_dialog()
-        confirm_delete(candidates[i])
+        vim.schedule(function()
+          confirm_delete(candidates[i])
+        end)
       end, o)
     end
   end)
