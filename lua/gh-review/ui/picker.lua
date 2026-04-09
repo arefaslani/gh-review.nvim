@@ -1,12 +1,12 @@
 local M = {}
 
 local STATUS_ICONS = {
-  added    = "+",
-  modified = "~",
-  removed  = "-",
-  renamed  = "R",
-  copied   = "C",
-  changed  = "~",
+  added    = "󰐕",  -- file with +
+  modified = "󱇨",  -- file with +-
+  removed  = "󰍴",  -- file with -
+  renamed  = "󰁔",  -- file with arrow
+  copied   = "󰆏",  -- file copy
+  changed  = "󱇨",  -- file with +-
 }
 
 local STATUS_HL = {
@@ -50,6 +50,17 @@ local function build_file_items(files)
   local file_idx_to_picker_idx = {}
   local current_dir = nil
 
+  -- Pre-scan to determine the last file in each directory group
+  local last_in_dir = {}
+  local prev_dir = nil
+  for i = #sorted, 1, -1 do
+    local dir = sorted[i].filename:match("^(.*)/[^/]+$")
+    if dir and dir ~= prev_dir then
+      last_in_dir[sorted[i].filename] = true
+      prev_dir = dir
+    end
+  end
+
   for _, f in ipairs(sorted) do
     local dir = f.filename:match("^(.*)/[^/]+$")  -- nil for root-level files
 
@@ -65,6 +76,7 @@ local function build_file_items(files)
 
     local icon  = STATUS_ICONS[f.status] or "?"
     local stats = string.format("+%d -%d", f.additions or 0, f.deletions or 0)
+    local is_last = last_in_dir[f.filename] or false
     table.insert(items, {
       file_idx    = orig_idx,
       type        = "file",
@@ -78,6 +90,7 @@ local function build_file_items(files)
       additions   = f.additions or 0,
       deletions   = f.deletions or 0,
       indent      = dir ~= nil,      -- true when nested under a directory header
+      is_last     = is_last,         -- last file in its directory group
       _file_entry = f,               -- raw GhFile for downstream use
     })
   end
@@ -237,7 +250,8 @@ function M.open(state, config)
     format = function(item, _picker)
       if item.type == "dir_header" then
         return {
-          { item.display .. "/", "Comment" },
+          { " ", "Directory" },
+          { " " .. item.display .. "/", "Comment" },
         }
       elseif item.type == "commit" then
         local is_active = item.commit_idx == state.pr.current_commit_idx
@@ -253,14 +267,22 @@ function M.open(state, config)
         local is_viewed = state.review.viewed_files[item.filename]
         local hl        = STATUS_HL[item.status] or "Normal"
         local stat_hl   = item.additions > 0 and "GhStatAdd" or "GhStatDel"
-        local indent    = item.indent and "  " or ""
-        local prefix    = is_active and "▶ " or "  "
         local name_hl   = is_active and "Special" or "Normal"
         local viewed_chunk = is_viewed
           and { "✔ ", "DiagnosticOk" }
           or  { "  ", "Normal" }
+
+        local tree_prefix
+        if item.indent then
+          local connector = item.is_last and "└── " or "├── "
+          tree_prefix = (is_active and "▶" or " ") .. connector
+        else
+          tree_prefix = is_active and "▶ " or "  "
+        end
+
         return {
-          { indent .. prefix .. item.icon .. " ", is_active and "Special" or hl },
+          { tree_prefix,                          is_active and "Special" or "Comment" },
+          { item.icon .. " ",                     is_active and "Special" or hl },
           viewed_chunk,
           { item.display .. " ",                  name_hl },
           { item.stats,                           stat_hl },
