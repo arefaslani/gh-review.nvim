@@ -513,6 +513,10 @@ function M.delete_pending(state)
       end
     end
 
+    -- Capture cursor position before any dialogs open
+    local diff_win = vim.api.nvim_get_current_win()
+    local saved_pos = vim.api.nvim_win_get_cursor(diff_win)
+
     local function confirm_delete(candidate)
       vim.ui.select({ "Yes", "No" }, {
         prompt = "Delete comment? " .. candidate.label,
@@ -520,6 +524,8 @@ function M.delete_pending(state)
         if choice == "Yes" then
           do_delete(candidate)
         end
+        -- Restore cursor to the diff window after the confirmation dialog closes
+        make_restore(diff_win, saved_pos)()
       end)
     end
 
@@ -528,10 +534,6 @@ function M.delete_pending(state)
       confirm_delete(candidates[1])
       return
     end
-
-    -- Multiple candidates — show numbered selection dialog
-    local diff_win = vim.api.nvim_get_current_win()
-    local saved_pos = vim.api.nvim_win_get_cursor(diff_win)
 
     local lines = { "  Delete comment:", "" }
     for i, c in ipairs(candidates) do
