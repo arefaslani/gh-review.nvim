@@ -380,6 +380,7 @@ function M.show_help(state)
     string.format("  %-16s  Toggle comment visibility", k(cfg.toggle_comments)),
     "",
     "  Review",
+    string.format("  %-16s  Toggle file viewed status", k(cfg.toggle_viewed)),
     string.format("  %-16s  Submit review", k(cfg.submit_review)),
     "",
     "  Edit",
